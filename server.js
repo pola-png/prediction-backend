@@ -18,10 +18,11 @@ const requiredEnvVars = [
   'API_FOOTBALL_KEY'
 ];
 
-for (const envVar of requiredEnvVars) {
-  if (!process.env[envVar]) {
-    console.warn(`⚠️ Warning: ${envVar} is not set in environment variables`);
-  }
+const missingVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
+if (missingVars.length > 0) {
+  console.warn(`⚠️ Warning: The following environment variables are not set: ${missingVars.join(', ')}`);
+} else {
+  console.log('✅ All required environment variables are set');
 }
 
 // Routes
