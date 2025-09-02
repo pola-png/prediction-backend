@@ -28,7 +28,6 @@ if (missingVars.length > 0) {
 // Routes
 const matchRoutes = require('./appRoutes/matchRoutes');
 const predictionRoutes = require('./appRoutes/predictionRoutes');
-const oddsRoutes = require('./appRoutes/oddsRoutes');
 const resultRoutes = require('./appRoutes/resultRoutes');
 
 // Services
@@ -48,7 +47,6 @@ app.use(morgan('dev'));
 // Routes
 app.use('/api/matches', matchRoutes);
 app.use('/api/predictions', predictionRoutes);
-app.use('/api/odds', oddsRoutes);
 app.use('/api/results', resultRoutes);
 
 // Health check
