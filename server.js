@@ -1,4 +1,7 @@
+// Load environment variables
 require('dotenv').config();
+
+// Import dependencies
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -7,6 +10,19 @@ const http = require('http');
 const WebSocket = require('ws');
 const cron = require('node-cron');
 const path = require('path');
+
+// Environment variables validation
+const requiredEnvVars = [
+  'MONGO_URI',
+  'FOOTBALL_DATA_KEY',
+  'API_FOOTBALL_KEY'
+];
+
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.warn(`⚠️ Warning: ${envVar} is not set in environment variables`);
+  }
+}
 
 // Routes
 const matchRoutes = require('./appRoutes/matchRoutes');
