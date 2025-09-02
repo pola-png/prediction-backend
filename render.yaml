@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: prediction-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGO_URI
+        sync: false
+      - key: FOOTBALL_DATA_KEY
+        sync: false
+      - key: API_FOOTBALL_KEY
+        sync: false
+      - key: ENABLE_LIVE_UPDATES
+        value: "true"
+    healthCheckPath: /
+    autoDeploy: true

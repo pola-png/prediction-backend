@@ -211,9 +211,9 @@ process.on('SIGTERM', () => {
   Object.values(cronJobs).forEach(job => job.stop());
 });
 
-// MongoDB connection setup
+// Server configuration
+const PORT = process.env.PORT || 10000;
 const MONGO_URI = process.env.MONGO_URI;
-const PORT = process.env.PORT || 5000;
 
 if (!MONGO_URI) {
   console.error('❌ MONGO_URI is not set in .env');
