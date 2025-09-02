@@ -1,10 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
+const cors = require('cors');
 const morgan = require('morgan');
 const http = require('http');
 const WebSocket = require('ws');
 const cron = require('node-cron');
+const path = require('path');
 
 // Routes
 const matchRoutes = require('./appRoutes/matchRoutes');
@@ -78,6 +80,24 @@ if (process.env.ENABLE_LIVE_UPDATES === 'true') {
   liveUpdateService.start();
   console.log('🔄 Live updates enabled');
 }
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({
+    status: 'error',
+    message: 'Internal server error',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
+});
+
+// Handle unhandled routes
+app.use((req, res) => {
+  res.status(404).json({
+    status: 'error',
+    message: 'Route not found'
+  });
+});
 
 // Cron jobs setup
 const cronJobs = {
@@ -175,7 +195,7 @@ process.on('SIGTERM', () => {
   Object.values(cronJobs).forEach(job => job.stop());
 });
 
-// MongoDB connection
+// MongoDB connection setup
 const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT || 5000;
 
@@ -184,17 +204,83 @@ if (!MONGO_URI) {
   process.exit(1);
 }
 
-mongoose.connect(MONGO_URI)
-  .then(() => {
+// MongoDB connection options
+const mongooseOptions = {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+  family: 4,
+  retryWrites: true,
+  maxPoolSize: 50
+};
+
+// Connect to MongoDB with enhanced error handling
+async function connectToMongoDB() {
+  try {
+    await mongoose.connect(MONGO_URI, mongooseOptions);
     console.log('✅ Connected to MongoDB');
+    
+    // Start server only after successful DB connection
     server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
-  })
-  .catch((err) => {
+  } catch (err) {
     console.error('❌ MongoDB connection error:', err.message);
     process.exit(1);
+  }
+}
+
+// Handle MongoDB connection events
+mongoose.connection.on('error', err => {
+  console.error('MongoDB error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('MongoDB disconnected. Attempting to reconnect...');
+});
+
+mongoose.connection.on('reconnected', () => {
+  console.log('✅ MongoDB reconnected');
+});
+
+// Start the application
+connectToMongoDB();
+
+// Graceful shutdown handling
+process.on('SIGTERM', async () => {
+  console.log('🛑 SIGTERM received. Starting graceful shutdown...');
+  
+  // Stop cron jobs
+  Object.values(cronJobs).forEach(job => job.stop());
+  
+  // Stop live updates
+  if (process.env.ENABLE_LIVE_UPDATES === 'true') {
+    liveUpdateService.stop();
+  }
+  
+  // Close WebSocket connections
+  wss.clients.forEach(client => {
+    client.terminate();
   });
+  
+  // Close HTTP server
+  server.close(() => {
+    console.log('HTTP server closed');
+    
+    // Close MongoDB connection
+    mongoose.connection.close(false, () => {
+      console.log('MongoDB connection closed');
+      process.exit(0);
+    });
+  });
+  
+  // Force close after 10 seconds
+  setTimeout(() => {
+    console.error('Could not close connections in time, forcefully shutting down');
+    process.exit(1);
+  }, 10000);
+});
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
