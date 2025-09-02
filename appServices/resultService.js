@@ -6,6 +6,69 @@ const FD_API = "https://api.football-data.org/v4";
 const AF_API = "https://v3.football.api-sports.io";
 
 const resultService = {
+  // Cron job functions
+  async updateAllResults() {
+    console.log('📊 Updating match results...');
+    const afKey = process.env.API_FOOTBALL_KEY;
+    const fdKey = process.env.FOOTBALL_DATA_KEY;
+
+    try {
+      // Get finished matches that need updating
+      const matches = await Match.find({ 
+        status: { $in: ['SCHEDULED', 'LIVE', 'IN_PLAY', 'PAUSED'] }
+      });
+
+      for (const match of matches) {
+        try {
+          // Check API Football
+          const afResponse = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
+            headers: { 'x-apisports-key': afKey }
+          });
+
+          if (afResponse.data?.response?.[0]) {
+            const fixtureData = afResponse.data.response[0];
+            if (fixtureData.fixture.status.short === 'FT') {
+              await this.processFinishedMatch(match, fixtureData);
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to update match ${match._id}:`, err.message);
+        }
+      }
+      
+      console.log('✅ Results update completed');
+    } catch (error) {
+      console.error('❌ Error updating results:', error.message);
+      throw error;
+    }
+  },
+
+  async processFinishedMatch(match, fixtureData) {
+    const result = {
+      match: match._id,
+      homeScore: fixtureData.goals.home,
+      awayScore: fixtureData.goals.away,
+      status: 'FINISHED',
+      date: new Date()
+    };
+
+    // Update match status
+    await Match.findByIdAndUpdate(match._id, { 
+      status: 'FINISHED',
+      score: {
+        home: fixtureData.goals.home,
+        away: fixtureData.goals.away
+      }
+    });
+
+    // Create or update result
+    await Result.findOneAndUpdate(
+      { match: match._id },
+      result,
+      { upsert: true, new: true }
+    );
+  },
+
   // Basic CRUD operations
   async getAllResults() {
     return await Result.find().populate('match').sort({ date: -1 });

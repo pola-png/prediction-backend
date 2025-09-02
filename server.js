@@ -44,6 +44,37 @@ app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
 
+// Cron job endpoints
+app.post('/cron/update-results', async (req, res) => {
+  const token = req.headers['x-cron-token'];
+  if (token !== process.env.CRON_SECRET) {
+    return res.status(403).send({ error: 'Forbidden' });
+  }
+
+  try {
+    await resultService.updateAllResults();
+    res.status(200).send({ message: 'Results updated successfully' });
+  } catch (error) {
+    console.error('Cron job error:', error);
+    res.status(500).send({ error: 'Failed to update results' });
+  }
+});
+
+app.post('/cron/update-predictions', async (req, res) => {
+  const token = req.headers['x-cron-token'];
+  if (token !== process.env.CRON_SECRET) {
+    return res.status(403).send({ error: 'Forbidden' });
+  }
+
+  try {
+    await predictionService.generatePredictions();
+    res.status(200).send({ message: 'Predictions generated successfully' });
+  } catch (error) {
+    console.error('Cron job error:', error);
+    res.status(500).send({ error: 'Failed to generate predictions' });
+  }
+});
+
 // Routes
 app.use('/api/matches', matchRoutes);
 app.use('/api/predictions', predictionRoutes);
