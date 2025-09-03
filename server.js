@@ -33,8 +33,12 @@ const seedRoutes = require('./appRoutes/seedRoutes');
 
 // Services
 const liveUpdateService = require('./appServices/liveUpdateService');
-const predictionService = require('./appServices/predictionService');
+const PredictionService = require('./appServices/predictionService');
 const resultService = require('./appServices/resultService');
+const matchService = require('./appServices/matchService');
+
+// Initialize services
+const predictionService = new PredictionService();
 
 const app = express();
 const server = http.createServer(app);
@@ -64,8 +68,8 @@ cron.schedule('*/30 * * * *', async () => {
 cron.schedule('0 * * * *', async () => {
   console.log('🎯 Running hourly prediction update...');
   try {
-    await predictionService.generatePredictions();
-    console.log('✅ Hourly predictions updated');
+    const count = await predictionService.refreshPredictions();
+    console.log(`✅ Hourly predictions updated: ${count} predictions generated`);
   } catch (error) {
     console.error('❌ Hourly prediction update failed:', error);
   }
@@ -77,6 +81,12 @@ cron.schedule('0 * * * *', async () => {
 // Routes
 const cronRoutes = require('./appRoutes/cronRoutes');
 app.use('/cron', cronRoutes);
+app.use('/seed', seedRoutes);
+
+// Test route to verify server is running
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 app.use('/seed', seedRoutes);
 
 // API Routes
@@ -302,7 +312,9 @@ process.on('SIGTERM', async () => {
   console.log('🛑 SIGTERM received. Starting graceful shutdown...');
   
   // Stop cron jobs
-  Object.values(cronJobs).forEach(job => job.stop());
+  if (typeof cronJobs !== 'undefined') {
+    Object.values(cronJobs).forEach(job => job.stop());
+  }
   
   // Stop live updates
   if (process.env.ENABLE_LIVE_UPDATES === 'true') {
@@ -314,33 +326,26 @@ process.on('SIGTERM', async () => {
     client.terminate();
   });
   
-  // Close HTTP server
-  server.close(() => {
-    console.log('HTTP server closed');
-    
-    // Close MongoDB connection
-    mongoose.connection.close(false, () => {
-      console.log('MongoDB connection closed');
-      process.exit(0);
+  try {
+    // Close HTTP server
+    await new Promise((resolve) => {
+      server.close(() => {
+        console.log('HTTP server closed');
+        resolve();
+      });
     });
-  });
-  
-  // Force close after 10 seconds
-  setTimeout(() => {
-    console.error('Could not close connections in time, forcefully shutting down');
-    process.exit(1);
-  }, 10000);
-});
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received. Shutting down...');
-  liveUpdateService.stop();
-  server.close(() => {
-    console.log('Server closed');
-    mongoose.connection.close(false, () => {
+    // Close MongoDB connection
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close();
       console.log('MongoDB connection closed');
-      process.exit(0);
-    });
+    }
+
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
+});
   });
 });
