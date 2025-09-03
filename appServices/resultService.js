@@ -59,8 +59,15 @@ const resultService = {
           if (afKey && match.apiFootballId) {
             console.log(`🔄 Checking API-Football for match ${match._id} (API ID: ${match.apiFootballId})`);
             try {
-              const afResponse = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
-                headers: { 'x-apisports-key': afKey }
+              const afResponse = await axios.get(`${AF_API}/fixtures`, {
+                headers: {
+                  'x-rapidapi-host': 'v3.football.api-sports.io',
+                  'x-rapidapi-key': afKey
+                },
+                params: {
+                  id: match.apiFootballId,
+                  timezone: 'UTC'
+                }
               });
 
               if (!afResponse.data?.response?.[0]) {
@@ -69,13 +76,34 @@ const resultService = {
                 const fixtureData = afResponse.data.response[0];
                 console.log(`📌 Match status from API-Football: ${fixtureData.fixture.status.short}`);
                 
-                if (fixtureData.fixture.status.short === 'FT') {
-                  console.log(`✨ Processing finished match ${match._id} [Score: ${fixtureData.goals.home}-${fixtureData.goals.away}]`);
+                // Check for all finished match statuses
+                const finishedStatuses = ['FT', 'AET', 'PEN'];
+                if (finishedStatuses.includes(fixtureData.fixture.status.short)) {
+                  console.log(`✨ Processing finished match ${match._id} [Score: ${fixtureData.goals.home}-${fixtureData.goals.away}] (${fixtureData.fixture.status.long})`);
+                  
+                  let finalScore = {
+                    home: fixtureData.goals.home,
+                    away: fixtureData.goals.away
+                  };
+
+                  // If penalties, use penalty score
+                  if (fixtureData.fixture.status.short === 'PEN' && fixtureData.score.penalty) {
+                    finalScore = {
+                      home: fixtureData.score.penalty.home,
+                      away: fixtureData.score.penalty.away
+                    };
+                  }
+                  
                   await this.processFinishedMatch(match, {
                     source: 'API_FOOTBALL',
-                    homeScore: fixtureData.goals.home,
-                    awayScore: fixtureData.goals.away,
-                    status: 'FINISHED'
+                    homeScore: finalScore.home,
+                    awayScore: finalScore.away,
+                    status: 'FINISHED',
+                    details: {
+                      regularTime: fixtureData.score.fulltime,
+                      extraTime: fixtureData.score.extratime,
+                      penalty: fixtureData.score.penalty
+                    }
                   });
                   resultFound = true;
                   updateResults.updated++;

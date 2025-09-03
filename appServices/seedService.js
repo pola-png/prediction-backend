@@ -28,7 +28,10 @@ const seedService = {
       for (const leagueId of leagues) {
         console.log(`📥 Fetching teams for league ${leagueId}...`);
         const response = await axios.get(`${AF_API}/teams`, {
-          headers: { 'x-apisports-key': afKey },
+          headers: {
+            'x-rapidapi-host': 'v3.football.api-sports.io',
+            'x-rapidapi-key': afKey
+          },
           params: {
             league: leagueId,
             season: 2025
@@ -93,11 +96,15 @@ const seedService = {
 
       for (const leagueId of leagues) {
         const response = await axios.get(`${AF_API}/fixtures`, {
-          headers: { 'x-apisports-key': afKey },
+          headers: {
+            'x-rapidapi-host': 'v3.football.api-sports.io',
+            'x-rapidapi-key': afKey
+          },
           params: {
             league: leagueId,
             season: 2025,
-            status: 'NS'  // Not Started matches
+            status: 'NS-PST-LIVE',  // Not Started, Postponed, and Live matches
+            timezone: 'UTC'
           }
         });
 
