@@ -2,6 +2,9 @@
   "compilerOptions": {
     "module": "commonjs",
     "moduleResolution": "node",
+    "target": "es2020",
+    "checkJs": false,
+    "allowJs": true,
     "baseUrl": ".",
     "paths": {
       "*": ["*"]

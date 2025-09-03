@@ -5,25 +5,18 @@ const Match = require('../models/Match');
 const FD_API = "https://api.football-data.org/v4";
 const AF_API = "https://v3.football.api-sports.io";
 
-/**
- * Service for managing football match results
- * @type {Object}
- */
 const resultService = {
-  /**
-   * Updates all match results that need processing
-   * @returns {Promise<{processed: number, updated: number}>}
-   */
+  // Cron job functions
   async updateAllResults() {
     console.log('📊 Starting match results update...');
     const afKey = process.env.API_FOOTBALL_KEY;
-    const fdKey = process.env.FOOTBALL_DATA_KEY;
 
     if (!afKey) {
       throw new Error('API_FOOTBALL_KEY is required for updates');
     }
 
     try {
+      // Only get matches from the last 24 hours that aren't finished
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
       
       const matches = await Match.find({
@@ -33,16 +26,57 @@ const resultService = {
           $lte: new Date()
         }
       })
-      .select('_id apiFootballId fdApiId homeTeam awayTeam')
-      .limit(20)
-      .sort({ date: 1 });
+      .select('_id apiFootballId homeTeam awayTeam')
+      .limit(20) // Process fewer matches per batch
+      .sort({ date: 1 }); // Oldest first
+
+      console.log(`Found ${matches.length} matches to check`);
+
+      if (matches.length === 0) {
+        return { processed: 0, message: 'No matches to update' };
+      }
+
+      // Process matches in smaller chunks
+      let updated = 0;
+
+      for (const match of matches) {
+        try {
+          // Get match result from API Football
+          const response = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
+            headers: { 'x-apisports-key': afKey }
+          });
+
+          const fixture = response.data?.response?.[0];
+          if (!fixture) continue;
+
+          // Only update if match is finished
+          if (fixture.fixture.status.short === 'FT') {
+            await Match.updateOne(
+              { _id: match._id },
+              { 
+                status: 'FINISHED',
+                'score.home': fixture.goals.home,
+                'score.away': fixture.goals.away,
+                updatedAt: new Date()
+              }
+            );
+            updated++;
+          }
+        } catch (err) {
+          console.error(`Failed to update match ${match._id}:`, err.message);
+          continue; // Skip to next match on error
+        }
+      }
+
+      console.log(`✅ Updated ${updated} matches`);
+      return { processed: matches.length, updated };
+    } catch (error) {
+      console.error('❌ Update process failed:', error.message);
+      throw error;
+    }
 
       console.log(`Found ${matches.length} matches to check for updates`);
       
-      if (matches.length === 0) {
-        return { processed: 0, updated: 0, skipped: 0, failed: 0 };
-      }
-
       const updateResults = {
         total: matches.length,
         updated: 0,
@@ -54,6 +88,7 @@ const resultService = {
         try {
           let resultFound = false;
 
+          // Try API-Football first
           if (afKey && match.apiFootballId) {
             try {
               const afResponse = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
@@ -78,6 +113,7 @@ const resultService = {
             }
           }
 
+          // Try Football-Data.org as backup
           if (!resultFound && fdKey && match.fdApiId) {
             try {
               const fdResponse = await axios.get(`${FD_API}/matches/${match.fdApiId}`, {
@@ -192,29 +228,29 @@ const resultService = {
   },
 
   // Basic CRUD operations
-  getAllResults: async function() {
+  async getAllResults() {
     return await Result.find().populate('match').sort({ date: -1 });
   },
 
-  getResultById: async function(id) {
+  async getResultById(id) {
     return await Result.findById(id).populate('match');
   },
 
-  createResult: async function(data) {
+  async createResult(data) {
     const result = new Result(data);
     return await result.save();
   },
 
-  updateResult: async function(id, data) {
+  async updateResult(id, data) {
     return await Result.findByIdAndUpdate(id, data, { new: true });
   },
 
-  deleteResult: async function(id) {
+  async deleteResult(id) {
     return await Result.findByIdAndDelete(id);
   },
 
   // Enhanced operations for cron jobs
-  fetchAndStoreResults: async function() {
+  async fetchAndStoreResults() {
     try {
       // Try Football-Data.org first
       let results = await this.fetchFromFootballData();
@@ -234,7 +270,7 @@ const resultService = {
     }
   },
 
-  fetchFromFootballData: async function() {
+  async fetchFromFootballData() {
     const fdKey = process.env.FOOTBALL_DATA_KEY;
     if (!fdKey) return [];
 
@@ -260,7 +296,7 @@ const resultService = {
     }
   },
 
-  fetchFromApiFootball: async function() {
+  async fetchFromApiFootball() {
     const afKey = process.env.API_FOOTBALL_KEY;
     if (!afKey) return [];
 
@@ -286,10 +322,11 @@ const resultService = {
     }
   },
 
-  upsertResults: async function(results) {
+  async upsertResults(results) {
     const saved = [];
     for (const result of results) {
       try {
+        // Find corresponding match
         const match = await Match.findOne({
           provider: result.provider,
           providerMatchId: result.providerMatchId
@@ -297,6 +334,7 @@ const resultService = {
 
         if (!match) continue;
 
+        // Update match status
         match.status = 'FINISHED';
         match.score = {
           current: { home: result.homeScore, away: result.awayScore },
@@ -304,6 +342,7 @@ const resultService = {
         };
         await match.save();
 
+        // Create or update result
         const updated = await Result.findOneAndUpdate(
           { match: match._id },
           {
