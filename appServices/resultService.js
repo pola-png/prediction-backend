@@ -8,65 +8,160 @@ const AF_API = "https://v3.football.api-sports.io";
 const resultService = {
   // Cron job functions
   async updateAllResults() {
-    console.log('📊 Updating match results...');
+    console.log('📊 Starting match results update...');
     const afKey = process.env.API_FOOTBALL_KEY;
     const fdKey = process.env.FOOTBALL_DATA_KEY;
 
+    if (!afKey && !fdKey) {
+      throw new Error('No API keys configured for result updates');
+    }
+
     try {
-      // Get finished matches that need updating
-      const matches = await Match.find({ 
-        status: { $in: ['SCHEDULED', 'LIVE', 'IN_PLAY', 'PAUSED'] }
-      });
+      // Get matches that need updating (not finished)
+      const matches = await Match.find({
+        status: { $in: ['SCHEDULED', 'LIVE', 'IN_PLAY', 'PAUSED'] },
+        date: { $lte: new Date() } // Only matches that should have started
+      }).select('_id apiFootballId fdApiId homeTeam awayTeam date status');
+
+      console.log(`Found ${matches.length} matches to check for updates`);
+      
+      const updateResults = {
+        total: matches.length,
+        updated: 0,
+        failed: 0,
+        skipped: 0
+      };
 
       for (const match of matches) {
         try {
-          // Check API Football
-          const afResponse = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
-            headers: { 'x-apisports-key': afKey }
-          });
+          let resultFound = false;
 
-          if (afResponse.data?.response?.[0]) {
-            const fixtureData = afResponse.data.response[0];
-            if (fixtureData.fixture.status.short === 'FT') {
-              await this.processFinishedMatch(match, fixtureData);
+          // Try API-Football first
+          if (afKey && match.apiFootballId) {
+            try {
+              const afResponse = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
+                headers: { 'x-apisports-key': afKey }
+              });
+
+              if (afResponse.data?.response?.[0]) {
+                const fixtureData = afResponse.data.response[0];
+                if (fixtureData.fixture.status.short === 'FT') {
+                  await this.processFinishedMatch(match, {
+                    source: 'API_FOOTBALL',
+                    homeScore: fixtureData.goals.home,
+                    awayScore: fixtureData.goals.away,
+                    status: 'FINISHED'
+                  });
+                  resultFound = true;
+                  updateResults.updated++;
+                }
+              }
+            } catch (err) {
+              console.warn(`API-Football update failed for match ${match._id}:`, err.message);
             }
           }
+
+          // Try Football-Data.org as backup
+          if (!resultFound && fdKey && match.fdApiId) {
+            try {
+              const fdResponse = await axios.get(`${FD_API}/matches/${match.fdApiId}`, {
+                headers: { 'X-Auth-Token': fdKey }
+              });
+
+              if (fdResponse.data && fdResponse.data.status === 'FINISHED') {
+                await this.processFinishedMatch(match, {
+                  source: 'FOOTBALL_DATA',
+                  homeScore: fdResponse.data.score.fullTime.home,
+                  awayScore: fdResponse.data.score.fullTime.away,
+                  status: 'FINISHED'
+                });
+                updateResults.updated++;
+                resultFound = true;
+              }
+            } catch (err) {
+              console.warn(`Football-Data.org update failed for match ${match._id}:`, err.message);
+            }
+          }
+
+          if (!resultFound) {
+            updateResults.skipped++;
+          }
         } catch (err) {
-          console.error(`Failed to update match ${match._id}:`, err.message);
+          console.error(`Failed to process match ${match._id}:`, err.message);
+          updateResults.failed++;
         }
       }
       
-      console.log('✅ Results update completed');
+      console.log('✅ Results update completed', updateResults);
+      return updateResults;
     } catch (error) {
       console.error('❌ Error updating results:', error.message);
       throw error;
     }
   },
 
-  async processFinishedMatch(match, fixtureData) {
-    const result = {
-      match: match._id,
-      homeScore: fixtureData.goals.home,
-      awayScore: fixtureData.goals.away,
-      status: 'FINISHED',
-      date: new Date()
-    };
+  async processFinishedMatch(match, resultData) {
+    const session = await Match.startSession();
+    
+    try {
+      await session.withTransaction(async () => {
+        // Prepare result document
+        const result = {
+          match: match._id,
+          homeScore: resultData.homeScore,
+          awayScore: resultData.awayScore,
+          status: resultData.status,
+          date: new Date(),
+          source: resultData.source,
+          updatedAt: new Date()
+        };
 
-    // Update match status
-    await Match.findByIdAndUpdate(match._id, { 
-      status: 'FINISHED',
-      score: {
-        home: fixtureData.goals.home,
-        away: fixtureData.goals.away
-      }
-    });
+        // Update match status and score
+        await Match.findByIdAndUpdate(
+          match._id,
+          { 
+            status: 'FINISHED',
+            score: {
+              home: resultData.homeScore,
+              away: resultData.awayScore
+            },
+            updatedAt: new Date()
+          },
+          { session }
+        );
 
-    // Create or update result
-    await Result.findOneAndUpdate(
-      { match: match._id },
-      result,
-      { upsert: true, new: true }
-    );
+        // Create or update result with full history
+        await Result.findOneAndUpdate(
+          { match: match._id },
+          {
+            $set: {
+              ...result,
+              lastUpdate: new Date()
+            },
+            $push: {
+              history: {
+                homeScore: resultData.homeScore,
+                awayScore: resultData.awayScore,
+                source: resultData.source,
+                timestamp: new Date()
+              }
+            }
+          },
+          { 
+            upsert: true, 
+            new: true,
+            session
+          }
+        );
+
+        console.log(`✅ Updated result for match: ${match._id} (${resultData.source})`);
+      });
+    } catch (error) {
+      console.error(`Failed to process match ${match._id}:`, error);
+      throw error;
+    } finally {
+      await session.endSession();
+    }
   },
 
   // Basic CRUD operations
