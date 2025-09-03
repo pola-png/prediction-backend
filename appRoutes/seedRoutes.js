@@ -3,6 +3,32 @@ const router = express.Router();
 const seedService = require('../appServices/seedService');
 
 /**
+ * @route POST /seed/teams
+ * @desc Seed database with teams from API-Football
+ * @access Private
+ */
+router.post('/teams', async (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token || token !== process.env.ADMIN_TOKEN) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const result = await seedService.seedTeams();
+    res.json({ 
+      message: 'Teams seeded successfully', 
+      count: result.count 
+    });
+  } catch (err) {
+    console.error('Team seed error:', err);
+    res.status(500).json({ 
+      error: 'Failed to seed teams', 
+      details: err.message 
+    });
+  }
+});
+
+/**
  * @route POST /seed/matches
  * @desc Seed database with upcoming matches from API-Football
  * @access Private

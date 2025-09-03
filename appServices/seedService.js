@@ -1,5 +1,6 @@
 const axios = require('axios');
 const Match = require('../models/Match');
+const Team = require('../models/Team');
 
 const AF_API = "https://v3.football.api-sports.io";
 
@@ -8,6 +9,70 @@ const AF_API = "https://v3.football.api-sports.io";
  * @type {Object}
  */
 const seedService = {
+  /**
+   * Seeds initial team data into the database
+   * @returns {Promise<{count: number}>}
+   */
+  async seedTeams() {
+    console.log('🌱 Starting team seeding process...');
+    const afKey = process.env.API_FOOTBALL_KEY;
+
+    if (!afKey) {
+      throw new Error('API_FOOTBALL_KEY is required for seeding');
+    }
+
+    try {
+      const leagues = [39, 61]; // Premier League, Ligue 1
+      let allTeams = [];
+
+      for (const leagueId of leagues) {
+        console.log(`📥 Fetching teams for league ${leagueId}...`);
+        const response = await axios.get(`${AF_API}/teams`, {
+          headers: { 'x-apisports-key': afKey },
+          params: {
+            league: leagueId,
+            season: 2025
+          }
+        });
+
+        if (!response.data?.response) continue;
+
+        const teams = response.data.response.map(t => ({
+          apiFootballId: t.team.id,
+          name: t.team.name,
+          shortName: t.team.code || t.team.name,
+          logo: t.team.logo,
+          leagueId: leagueId,
+          venue: {
+            name: t.venue?.name || null,
+            city: t.venue?.city || null,
+            capacity: t.venue?.capacity || null
+          }
+        }));
+
+        allTeams = allTeams.concat(teams);
+      }
+
+      if (allTeams.length === 0) {
+        console.log('⚠️ No teams found');
+        return { count: 0 };
+      }
+
+      // Insert teams with ordered: false to ignore duplicates
+      await Team.insertMany(allTeams, { ordered: false });
+      
+      console.log(`✅ Seeded ${allTeams.length} teams successfully`);
+      return { count: allTeams.length };
+
+    } catch (error) {
+      console.error('❌ Team seeding failed:', error.message);
+      if (error.response) {
+        console.error('API Response:', error.response.data);
+      }
+      throw error;
+    }
+  },
+
   /**
    * Fetches upcoming matches from API-Football and seeds the database
    * @returns {Promise<{count: number}>}
@@ -38,19 +103,31 @@ const seedService = {
 
         if (!response.data?.response) continue;
 
-        const matches = response.data.response.map(m => ({
-          apiFootballId: m.fixture.id,
-          leagueId: leagueId,
-          homeTeam: m.teams.home.name,
-          awayTeam: m.teams.away.name,
-          date: new Date(m.fixture.date),
-          status: 'SCHEDULED',
-          competition: {
-            id: m.league.id,
-            name: m.league.name,
-            country: m.league.country
+        // Find teams in our database
+        const matches = [];
+        for (const m of response.data.response) {
+          const homeTeam = await Team.findOne({ apiFootballId: m.teams.home.id });
+          const awayTeam = await Team.findOne({ apiFootballId: m.teams.away.id });
+          
+          if (!homeTeam || !awayTeam) {
+            console.log(`⚠️ Skipping match ${m.fixture.id} - teams not found in database`);
+            continue;
           }
-        }));
+
+          matches.push({
+            apiFootballId: m.fixture.id,
+            leagueId: leagueId,
+            homeTeam: homeTeam._id,
+            awayTeam: awayTeam._id,
+            date: new Date(m.fixture.date),
+            status: 'SCHEDULED',
+            competition: {
+              id: m.league.id,
+              name: m.league.name,
+              country: m.league.country
+            }
+          });
+        }
 
         allMatches = allMatches.concat(matches);
       }
