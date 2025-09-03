@@ -1,7 +1,7 @@
 const axios = require('axios');
 const Match = require('../models/Match');
 const Team = require('../models/Team');
-const { FOOTBALL_DATA_SOURCES } = require('../utils/dataSources');
+const { FOOTBALL_JSON_SOURCES } = require('../utils/dataSources');
 
 /**
  * Service for seeding match data
@@ -9,68 +9,78 @@ const { FOOTBALL_DATA_SOURCES } = require('../utils/dataSources');
  */
 const seedService = {
   /**
-   * Seeds initial team data into the database
+   * Seeds initial team data into the database from football.json data
    * @returns {Promise<{count: number}>}
    */
   async seedTeams() {
-    console.log('🌱 Starting team seeding process...');
-    const afKey = process.env.API_FOOTBALL_KEY;
-
-    if (!afKey) {
-      throw new Error('API_FOOTBALL_KEY is required for seeding');
-    }
-
+    console.log('🌱 Starting team seeding process from football.json...');
+    
     try {
-      const leagues = [39, 61]; // Premier League, Ligue 1
-      let allTeams = [];
+      let allTeams = new Set();
 
-      for (const leagueId of leagues) {
-        console.log(`📥 Fetching teams for league ${leagueId}...`);
-        const response = await axios.get(`${AF_API}/teams`, {
-          headers: {
-            'x-rapidapi-host': 'v3.football.api-sports.io',
-            'x-rapidapi-key': afKey
-          },
-          params: {
-            league: leagueId,
-            season: 2025
+      for (const [leagueCode, league] of Object.entries(FOOTBALL_JSON_SOURCES)) {
+        console.log(`📥 Fetching teams for ${league.name}...`);
+        try {
+          const { data } = await axios.get(league.url);
+
+          if (!data.clubs && !data.matches) {
+            console.log(`⚠️ No team data found for ${league.name}`);
+            continue;
           }
-        });
 
-        if (!response.data?.response) continue;
-
-        const teams = response.data.response.map(t => ({
-          apiFootballId: t.team.id,
-          name: t.team.name,
-          shortName: t.team.code || t.team.name,
-          logo: t.team.logo,
-          leagueId: leagueId,
-          venue: {
-            name: t.venue?.name || null,
-            city: t.venue?.city || null,
-            capacity: t.venue?.capacity || null
+          // Extract teams from clubs if available
+          if (data.clubs) {
+            data.clubs.forEach(club => {
+              allTeams.add(JSON.stringify({
+                name: club.name,
+                code: club.code,
+                country: league.country,
+                leagues: [leagueCode]
+              }));
+            });
           }
-        }));
 
-        allTeams = allTeams.concat(teams);
+          // Extract teams from matches if no clubs data
+          if (data.matches) {
+            data.matches.forEach(match => {
+              allTeams.add(JSON.stringify({
+                name: match.team1,
+                country: league.country,
+                leagues: [leagueCode]
+              }));
+              allTeams.add(JSON.stringify({
+                name: match.team2,
+                country: league.country,
+                leagues: [leagueCode]
+              }));
+            });
+          }
+        } catch (err) {
+          console.error(`❌ Error fetching ${league.name} data:`, err.message);
+          continue;
+        }
       }
 
-      if (allTeams.length === 0) {
+      const teams = Array.from(allTeams).map(teamJson => JSON.parse(teamJson));
+
+      if (teams.length === 0) {
         console.log('⚠️ No teams found');
         return { count: 0 };
       }
 
       // Insert teams with ordered: false to ignore duplicates
-      await Team.insertMany(allTeams, { ordered: false });
+      await Team.insertMany(teams.map(team => ({
+        name: team.name,
+        shortName: team.code || team.name,
+        country: team.country,
+        leagues: team.leagues
+      })), { ordered: false });
       
-      console.log(`✅ Seeded ${allTeams.length} teams successfully`);
-      return { count: allTeams.length };
+      console.log(`✅ Seeded ${teams.length} teams successfully`);
+      return { count: teams.length };
 
     } catch (error) {
       console.error('❌ Team seeding failed:', error.message);
-      if (error.response) {
-        console.error('API Response:', error.response.data);
-      }
       throw error;
     }
   },

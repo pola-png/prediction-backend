@@ -14,8 +14,7 @@ const path = require('path');
 // Environment variables validation
 const requiredEnvVars = [
   'MONGO_URI',
-  'FOOTBALL_DATA_KEY',
-  'API_FOOTBALL_KEY'
+  'ADMIN_TOKEN'
 ];
 
 const missingVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
@@ -36,6 +35,7 @@ const liveUpdateService = require('./appServices/liveUpdateService');
 const predictionService = require('./appServices/predictionService');
 const resultService = require('./appServices/resultService');
 const matchService = require('./appServices/matchService');
+const updateService = require('./appServices/updateService');
 
 const app = express();
 const server = http.createServer(app);
@@ -158,19 +158,21 @@ app.use((req, res) => {
 
 // Cron jobs setup
 const cronJobs = {
-  // Fetch new matches and refresh predictions every 40 minutes
-  matchAndPredictions: cron.schedule('*/40 * * * *', async () => {
-    console.log('⏰ Fetching matches and updating predictions...');
+  // Update match results and refresh predictions every 30 minutes
+  matchAndPredictions: cron.schedule('*/30 * * * *', async () => {
+    console.log('⏰ Updating match results and predictions...');
     try {
-      const matches = await matchService.fetchAndStoreMatches();
-      console.log(`📊 Retrieved ${matches.length} matches`);
+      // Update results from OpenLigaDB
+      const results = await updateService.updateAllResults();
+      console.log('📊 Results update summary:', results);
       
+      // Refresh predictions for upcoming matches
       const predictions = await predictionService.refreshPredictions();
       console.log(`🎯 Updated ${predictions} predictions`);
       
-      console.log('✅ Matches and predictions updated successfully');
+      console.log('✅ Results and predictions updated successfully');
     } catch (err) {
-      console.error('❌ Match/Prediction update failed:', err.message);
+      console.error('❌ Update failed:', err.message);
     }
   }),
 
