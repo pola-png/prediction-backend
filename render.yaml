@@ -19,5 +19,7 @@ services:
         value: "true"
       - key: CRON_TOKEN
         sync: false
+      - key: ADMIN_TOKEN
+        sync: false
     healthCheckPath: /
     autoDeploy: true

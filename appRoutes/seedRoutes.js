@@ -10,21 +10,20 @@ const seedService = require('../appServices/seedService');
 router.post('/matches', async (req, res) => {
   const token = req.headers['x-admin-token'];
   if (!token || token !== process.env.ADMIN_TOKEN) {
-    return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
     const result = await seedService.seedUpcomingMatches();
-    res.json({
-      status: 'success',
-      ...result
+    res.json({ 
+      message: 'Matches seeded successfully', 
+      count: result.count 
     });
   } catch (err) {
     console.error('Seed route error:', err);
     res.status(500).json({ 
-      status: 'error', 
-      message: 'Failed to seed matches',
-      error: err.message 
+      error: 'Failed to seed matches', 
+      details: err.message 
     });
   }
 });
