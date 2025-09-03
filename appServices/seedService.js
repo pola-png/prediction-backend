@@ -1,8 +1,7 @@
 const axios = require('axios');
 const Match = require('../models/Match');
 const Team = require('../models/Team');
-
-const AF_API = "https://v3.football.api-sports.io";
+const { FOOTBALL_DATA_SOURCES } = require('../utils/dataSources');
 
 /**
  * Service for seeding match data
@@ -77,86 +76,80 @@ const seedService = {
   },
 
   /**
-   * Fetches upcoming matches from API-Football and seeds the database
-   * @returns {Promise<{count: number}>}
+   * Seeds matches from OpenFootball JSON data
+   * @returns {Promise<{count: number, errors: number}>}
    */
   async seedUpcomingMatches() {
-    console.log('🌱 Starting database seeding process...');
-    const afKey = process.env.API_FOOTBALL_KEY;
-
-    if (!afKey) {
-      throw new Error('API_FOOTBALL_KEY is required for seeding');
-    }
+    console.log('🌱 Starting database seeding process from football.json...');
 
     try {
-      console.log('📅 Fetching upcoming matches from API-Football...');
+      console.log('📅 Fetching matches from football.json sources...');
       
-      const leagues = [39, 61]; // Premier League, Ligue 1
-      let allMatches = [];
+      let totalMatches = 0;
+      let errorCount = 0;
 
-      for (const leagueId of leagues) {
-        const response = await axios.get(`${AF_API}/fixtures`, {
-          headers: {
-            'x-rapidapi-host': 'v3.football.api-sports.io',
-            'x-rapidapi-key': afKey
-          },
-          params: {
-            league: leagueId,
-            season: 2025,
-            status: 'NS-PST-LIVE',  // Not Started, Postponed, and Live matches
-            timezone: 'UTC'
-          }
-        });
+      for (const [leagueCode, dataUrl] of Object.entries(FOOTBALL_DATA_SOURCES)) {
+        console.log(`\n📊 Processing ${leagueCode} from ${dataUrl}...`);
+        
+        try {
+          const { data } = await axios.get(dataUrl);
 
-        if (!response.data?.response) continue;
-
-        // Find teams in our database
-        const matches = [];
-        for (const m of response.data.response) {
-          const homeTeam = await Team.findOne({ apiFootballId: m.teams.home.id });
-          const awayTeam = await Team.findOne({ apiFootballId: m.teams.away.id });
-          
-          if (!homeTeam || !awayTeam) {
-            console.log(`⚠️ Skipping match ${m.fixture.id} - teams not found in database`);
+          if (!data.matches || data.matches.length === 0) {
+            console.log(`⚠️ No matches found for ${leagueCode}`);
             continue;
           }
 
-          matches.push({
-            apiFootballId: m.fixture.id,
-            leagueId: leagueId,
-            homeTeam: homeTeam._id,
-            awayTeam: awayTeam._id,
-            date: new Date(m.fixture.date),
-            status: 'SCHEDULED',
-            competition: {
-              id: m.league.id,
-              name: m.league.name,
-              country: m.league.country
+          console.log(`Found ${data.matches.length} matches for ${leagueCode}`);
+
+          for (const match of data.matches) {
+            try {
+              const matchId = `${match.date}_${match.team1}_${match.team2}`;
+              
+              await Match.updateOne(
+                { matchId },
+                {
+                  matchId,
+                  date: new Date(match.date),
+                  homeTeam: match.team1,
+                  awayTeam: match.team2,
+                  score: match.score ? {
+                    home: match.score.ft[0],
+                    away: match.score.ft[1]
+                  } : null,
+                  status: match.score ? 'FINISHED' : 'SCHEDULED',
+                  competition: {
+                    code: leagueCode,
+                    name: data.name || `League ${leagueCode}`
+                  },
+                  updatedAt: new Date()
+                },
+                { upsert: true }
+              );
+
+              totalMatches++;
+            } catch (err) {
+              console.error(`❌ Error processing match: ${err.message}`);
+              errorCount++;
             }
-          });
+          }
+        } catch (err) {
+          console.error(`❌ Error fetching ${leagueCode} data:`, err.message);
+          errorCount++;
         }
-
-        allMatches = allMatches.concat(matches);
       }
 
-      if (allMatches.length === 0) {
-        console.log('⚠️ No upcoming matches found');
-        return { count: 0 };
-      }
-
-      console.log(`📥 Found ${allMatches.length} upcoming matches`);
-
-      // Use insertMany with ordered: false to ignore duplicates
-      await Match.insertMany(allMatches, { ordered: false });
+      const summary = `
+📊 Seeding Summary
+=================
+Total matches processed: ${totalMatches}
+Errors encountered: ${errorCount}
+=================`;
       
-      console.log(`✅ Seeded ${allMatches.length} matches successfully`);
-      return { count: allMatches.length };
+      console.log(summary);
+      return { count: totalMatches, errors: errorCount };
 
     } catch (error) {
       console.error('❌ Seeding process failed:', error.message);
-      if (error.response) {
-        console.error('API Response:', error.response.data);
-      }
       throw error;
     }
   },
@@ -170,23 +163,25 @@ const seedService = {
     try {
       console.log('🌱 Seeding test match...');
       
-      const match = new Match({
-        homeTeam: matchData.homeTeam,
-        awayTeam: matchData.awayTeam,
-        date: new Date(matchData.startTime),
-        status: 'SCHEDULED',
-        odds: matchData.odds || {
-          home: null,
-          draw: null,
-          away: null
-        }
-      });
+      const matchId = `${matchData.date}_${matchData.homeTeam}_${matchData.awayTeam}`;
+      
+      const match = await Match.findOneAndUpdate(
+        { matchId },
+        {
+          matchId,
+          date: new Date(matchData.date),
+          homeTeam: matchData.homeTeam,
+          awayTeam: matchData.awayTeam,
+          status: 'SCHEDULED',
+          updatedAt: new Date()
+        },
+        { upsert: true, new: true }
+      );
 
-      const saved = await match.save();
-      console.log(`✅ Test match saved: ${saved._id}`);
-      return saved;
+      console.log(`✅ Test match created: ${match.matchId}`);
+      return match;
     } catch (error) {
-      console.error('❌ Error seeding test match:', error.message);
+      console.error('❌ Error creating test match:', error.message);
       throw error;
     }
   }
