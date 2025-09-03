@@ -24,18 +24,31 @@ const resultService = {
     }
 
     try {
-      console.log('🔍 Looking for matches in the last 24 hours...');
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      console.log('🔍 Looking for matches to update...');
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       
+      // Get matches that are:
+      // 1. Not finished AND started in the last 24 hours
+      // 2. Not finished AND currently in progress
       const matches = await Match.find({
-        status: { $ne: 'FINISHED' },
-        date: { 
-          $gte: oneDayAgo,
-          $lte: new Date()
-        }
+        $and: [
+          { status: { $ne: 'FINISHED' } },
+          {
+            $or: [
+              {
+                date: { 
+                  $gte: oneDayAgo,
+                  $lte: now
+                }
+              },
+              { status: 'LIVE' }
+            ]
+          }
+        ]
       })
-      .select('_id apiFootballId fdApiId homeTeam awayTeam')
-      .limit(20)
+      .select('_id apiFootballId fdApiId homeTeam awayTeam status')
+      .limit(10) // Reduced to respect API rate limits
       .sort({ date: 1 });
 
       console.log(`📊 Found ${matches.length} unfinished matches from ${oneDayAgo.toISOString()} to now`);

@@ -45,6 +45,35 @@ app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
 
+// Set up cron jobs
+// Update match results every 30 minutes
+cron.schedule('*/30 * * * *', async () => {
+  console.log('🔄 Running scheduled result update (30-minute interval)...');
+  try {
+    const results = await resultService.updateAllResults();
+    console.log('✅ Scheduled update complete:', results);
+  } catch (error) {
+    console.error('❌ Scheduled update failed:', error);
+  }
+}, {
+  scheduled: true,
+  timezone: "UTC"
+});
+
+// Update predictions every hour
+cron.schedule('0 * * * *', async () => {
+  console.log('🎯 Running hourly prediction update...');
+  try {
+    await predictionService.generatePredictions();
+    console.log('✅ Hourly predictions updated');
+  } catch (error) {
+    console.error('❌ Hourly prediction update failed:', error);
+  }
+}, {
+  scheduled: true,
+  timezone: "UTC"
+});
+
 // Routes
 const cronRoutes = require('./appRoutes/cronRoutes');
 app.use('/cron', cronRoutes);
