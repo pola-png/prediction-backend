@@ -180,6 +180,7 @@ const cronJobs = {
   // Update results after match hours (at minute 15 of hours 0, 4, 8, 12, 16, 20)
   results: cron.schedule('15 0,4,8,12,16,20 * * *', async () => {
     console.log('⏰ Running post-match results update...');
+    const hour = new Date().getHours();
     // Only run frequent updates during typical match hours (12:00 - 23:00)
     if (hour >= 12 && hour <= 23) {
       console.log('⏰ Syncing match results...');
@@ -224,29 +225,7 @@ const cronJobs = {
     }
   }),
 
-  // Clean up old data and update stats daily at 03:00
-  maintenance: cron.schedule('0 3 * * *', async () => {
-    console.log('⏰ Running daily maintenance...');
-    try {
-      // Archive old matches (keep last 30 days)
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      
-      await Match.updateMany(
-        { 
-          date: { $lt: thirtyDaysAgo },
-          status: 'FINISHED'
-        },
-        { $set: { archived: true } }
-      );
 
-      // Update overall statistics
-      await predictionService.updateOverallStats();
-      console.log('✅ Daily maintenance completed');
-    } catch (err) {
-      console.error('❌ Maintenance failed:', err.message);
-    }
-  })
 };
 
 // Handle graceful shutdown of cron jobs
@@ -282,9 +261,7 @@ async function connectToMongoDB() {
     console.log('✅ Connected to MongoDB');
     
     // Start server only after successful DB connection
-    server.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
-    });
+    startServer();
   } catch (err) {
     console.error('❌ MongoDB connection error:', err.message);
     process.exit(1);
@@ -348,13 +325,14 @@ process.on('SIGTERM', async () => {
   }
 });
 
-// Start the server
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  
-  if (process.env.ENABLE_LIVE_UPDATES === 'true') {
-    console.log('🔄 Live updates enabled');
-    liveUpdateService.start(wss);
-  }
-});
+// Function to start the server
+function startServer() {
+  server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    
+    if (process.env.ENABLE_LIVE_UPDATES === 'true') {
+      console.log('🔄 Live updates enabled');
+      liveUpdateService.start(wss);
+    }
+  });
+}
