@@ -33,12 +33,9 @@ const seedRoutes = require('./appRoutes/seedRoutes');
 
 // Services
 const liveUpdateService = require('./appServices/liveUpdateService');
-const PredictionService = require('./appServices/predictionService');
+const predictionService = require('./appServices/predictionService');
 const resultService = require('./appServices/resultService');
 const matchService = require('./appServices/matchService');
-
-// Initialize services
-const predictionService = new PredictionService();
 
 const app = express();
 const server = http.createServer(app);
