@@ -13,24 +13,23 @@ const verifyCronToken = (req, res, next) => {
 };
 
 // Endpoint to update match results
-router.post('/update-results', verifyCronToken, (req, res) => {
-  // Respond immediately
-  res.json({ 
-    success: true,
-    message: 'Update process started',
-    jobId: Date.now(),
-    timestamp: new Date().toISOString()
-  });
+router.get('/update-results', async (req, res) => {
+  const token = req.headers['x-cron-token'];
+  if (token !== process.env.CRON_TOKEN) {
+    return res.status(403).send('Forbidden: invalid token');
+  }
 
-  // Process updates asynchronously
-  (async () => {
-    try {
-      const results = await resultService.updateAllResults();
-      console.log('✅ Async update completed:', results);
-    } catch (error) {
-      console.error('❌ Async update failed:', error);
-    }
-  })().catch(err => console.error('💥 Unhandled async error:', err));
+  // Respond immediately
+  res.status(200).send('Cron job received, updating results...');
+
+  // Continue processing asynchronously
+  try {
+    await resultService.updateAllResults();
+    console.log('✅ Results updated successfully');
+  } catch (err) {
+    console.error('❌ Error updating results:', err);
+  }
+});
 
 // Endpoint to update predictions
 router.post('/update-predictions', verifyCronToken, async (req, res) => {

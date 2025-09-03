@@ -10,36 +10,70 @@ const resultService = {
   async updateAllResults() {
     console.log('📊 Starting match results update...');
     const afKey = process.env.API_FOOTBALL_KEY;
-    const fdKey = process.env.FOOTBALL_DATA_KEY;
 
-    if (!afKey && !fdKey) {
-      throw new Error('No API keys configured for result updates');
+    if (!afKey) {
+      throw new Error('API_FOOTBALL_KEY is required for updates');
     }
 
     try {
-      // Get matches that need updating with optimized query
-      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      // Only get matches from the last 24 hours that aren't finished
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
       
       const matches = await Match.find({
-        $or: [
-          // Recently started or in-progress matches
-          {
-            status: { $in: ['SCHEDULED', 'LIVE', 'IN_PLAY', 'PAUSED'] },
-            date: { 
-              $lte: new Date(),
-              $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
-            }
-          },
-          // Recently updated matches that might need final score
-          {
-            updatedAt: { $gte: thirtyMinutesAgo },
-            status: { $ne: 'FINISHED' }
-          }
-        ]
+        status: { $ne: 'FINISHED' },
+        date: { 
+          $gte: oneDayAgo,
+          $lte: new Date()
+        }
       })
-      .select('_id apiFootballId fdApiId homeTeam awayTeam date status updatedAt')
-      .limit(50) // Process in batches
+      .select('_id apiFootballId homeTeam awayTeam')
+      .limit(20) // Process fewer matches per batch
       .sort({ date: 1 }); // Oldest first
+
+      console.log(`Found ${matches.length} matches to check`);
+
+      if (matches.length === 0) {
+        return { processed: 0, message: 'No matches to update' };
+      }
+
+      // Process matches in smaller chunks
+      let updated = 0;
+
+      for (const match of matches) {
+        try {
+          // Get match result from API Football
+          const response = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
+            headers: { 'x-apisports-key': afKey }
+          });
+
+          const fixture = response.data?.response?.[0];
+          if (!fixture) continue;
+
+          // Only update if match is finished
+          if (fixture.fixture.status.short === 'FT') {
+            await Match.updateOne(
+              { _id: match._id },
+              { 
+                status: 'FINISHED',
+                'score.home': fixture.goals.home,
+                'score.away': fixture.goals.away,
+                updatedAt: new Date()
+              }
+            );
+            updated++;
+          }
+        } catch (err) {
+          console.error(`Failed to update match ${match._id}:`, err.message);
+          continue; // Skip to next match on error
+        }
+      }
+
+      console.log(`✅ Updated ${updated} matches`);
+      return { processed: matches.length, updated };
+    } catch (error) {
+      console.error('❌ Update process failed:', error.message);
+      throw error;
+    }
 
       console.log(`Found ${matches.length} matches to check for updates`);
       
