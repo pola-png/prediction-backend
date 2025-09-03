@@ -6,7 +6,7 @@ const predictionService = require('../appServices/predictionService');
 // Middleware to verify cron token
 const verifyCronToken = (req, res, next) => {
   const token = req.headers['x-cron-token'];
-  if (!token || token !== process.env.CRON_SECRET) {
+  if (!token || token !== process.env.CRON_TOKEN) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();

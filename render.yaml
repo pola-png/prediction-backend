@@ -17,7 +17,7 @@ services:
         sync: false
       - key: ENABLE_LIVE_UPDATES
         value: "true"
-      - key: CRON_SECRET
+      - key: CRON_TOKEN
         sync: false
     healthCheckPath: /
     autoDeploy: true
