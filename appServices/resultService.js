@@ -17,11 +17,29 @@ const resultService = {
     }
 
     try {
-      // Get matches that need updating (not finished)
+      // Get matches that need updating with optimized query
+      const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+      
       const matches = await Match.find({
-        status: { $in: ['SCHEDULED', 'LIVE', 'IN_PLAY', 'PAUSED'] },
-        date: { $lte: new Date() } // Only matches that should have started
-      }).select('_id apiFootballId fdApiId homeTeam awayTeam date status');
+        $or: [
+          // Recently started or in-progress matches
+          {
+            status: { $in: ['SCHEDULED', 'LIVE', 'IN_PLAY', 'PAUSED'] },
+            date: { 
+              $lte: new Date(),
+              $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
+            }
+          },
+          // Recently updated matches that might need final score
+          {
+            updatedAt: { $gte: thirtyMinutesAgo },
+            status: { $ne: 'FINISHED' }
+          }
+        ]
+      })
+      .select('_id apiFootballId fdApiId homeTeam awayTeam date status updatedAt')
+      .limit(50) // Process in batches
+      .sort({ date: 1 }); // Oldest first
 
       console.log(`Found ${matches.length} matches to check for updates`);
       
@@ -101,17 +119,28 @@ const resultService = {
   },
 
   async processFinishedMatch(match, resultData) {
+    // Check if the result has actually changed
+    const existingResult = await Result.findOne(
+      { match: match._id },
+      { homeScore: 1, awayScore: 1 }
+    );
+
+    if (existingResult && 
+        existingResult.homeScore === resultData.homeScore && 
+        existingResult.awayScore === resultData.awayScore) {
+      return; // Skip if no change
+    }
+
     const session = await Match.startSession();
     
     try {
       await session.withTransaction(async () => {
-        // Prepare result document
+        // Prepare result document with minimal fields
         const result = {
           match: match._id,
           homeScore: resultData.homeScore,
           awayScore: resultData.awayScore,
           status: resultData.status,
-          date: new Date(),
           source: resultData.source,
           updatedAt: new Date()
         };

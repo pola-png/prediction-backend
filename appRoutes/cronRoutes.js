@@ -13,23 +13,24 @@ const verifyCronToken = (req, res, next) => {
 };
 
 // Endpoint to update match results
-router.post('/update-results', verifyCronToken, async (req, res) => {
-  try {
-    await resultService.updateAllResults();
-    res.json({ 
-      success: true,
-      message: 'Match results updated successfully',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Cron job error:', error);
-    res.status(500).json({ 
-      success: false,
-      error: 'Failed to update results',
-      message: error.message
-    });
-  }
-});
+router.post('/update-results', verifyCronToken, (req, res) => {
+  // Respond immediately
+  res.json({ 
+    success: true,
+    message: 'Update process started',
+    jobId: Date.now(),
+    timestamp: new Date().toISOString()
+  });
+
+  // Process updates asynchronously
+  (async () => {
+    try {
+      const results = await resultService.updateAllResults();
+      console.log('✅ Async update completed:', results);
+    } catch (error) {
+      console.error('❌ Async update failed:', error);
+    }
+  })().catch(err => console.error('💥 Unhandled async error:', err));
 
 // Endpoint to update predictions
 router.post('/update-predictions', verifyCronToken, async (req, res) => {
