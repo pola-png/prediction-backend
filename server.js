@@ -347,5 +347,14 @@ process.on('SIGTERM', async () => {
     process.exit(1);
   }
 });
-  });
+
+// Start the server
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  
+  if (process.env.ENABLE_LIVE_UPDATES === 'true') {
+    console.log('🔄 Live updates enabled');
+    liveUpdateService.start(wss);
+  }
 });
