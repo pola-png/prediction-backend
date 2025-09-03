@@ -24,6 +24,7 @@ const resultService = {
     }
 
     try {
+      console.log('🔍 Looking for matches in the last 24 hours...');
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
       
       const matches = await Match.find({
@@ -37,10 +38,11 @@ const resultService = {
       .limit(20)
       .sort({ date: 1 });
 
-      console.log(`Found ${matches.length} matches to check for updates`);
+      console.log(`📊 Found ${matches.length} unfinished matches from ${oneDayAgo.toISOString()} to now`);
       
       if (matches.length === 0) {
-        return { processed: 0, updated: 0, skipped: 0, failed: 0 };
+        console.log('ℹ️ No matches need updating');
+        return { processed: 0, updated: 0, skipped: 0, failed: 0, message: 'No unfinished matches found' };
       }
 
       const updateResults = {
@@ -55,14 +57,20 @@ const resultService = {
           let resultFound = false;
 
           if (afKey && match.apiFootballId) {
+            console.log(`🔄 Checking API-Football for match ${match._id} (API ID: ${match.apiFootballId})`);
             try {
               const afResponse = await axios.get(`${AF_API}/fixtures?id=${match.apiFootballId}`, {
                 headers: { 'x-apisports-key': afKey }
               });
 
-              if (afResponse.data?.response?.[0]) {
+              if (!afResponse.data?.response?.[0]) {
+                console.log(`⚠️ No data found in API-Football for match ${match._id}`);
+              } else {
                 const fixtureData = afResponse.data.response[0];
+                console.log(`📌 Match status from API-Football: ${fixtureData.fixture.status.short}`);
+                
                 if (fixtureData.fixture.status.short === 'FT') {
+                  console.log(`✨ Processing finished match ${match._id} [Score: ${fixtureData.goals.home}-${fixtureData.goals.away}]`);
                   await this.processFinishedMatch(match, {
                     source: 'API_FOOTBALL',
                     homeScore: fixtureData.goals.home,
@@ -74,28 +82,47 @@ const resultService = {
                 }
               }
             } catch (err) {
-              console.warn(`API-Football update failed for match ${match._id}:`, err.message);
+              console.error(`❌ API-Football update failed for match ${match._id}:`, err.message);
+              if (err.response) {
+                console.error(`Response status: ${err.response.status}`);
+                console.error('Response data:', err.response.data);
+              }
             }
           }
 
           if (!resultFound && fdKey && match.fdApiId) {
+            console.log(`🔄 Checking Football-Data.org for match ${match._id} (API ID: ${match.fdApiId})`);
             try {
               const fdResponse = await axios.get(`${FD_API}/matches/${match.fdApiId}`, {
                 headers: { 'X-Auth-Token': fdKey }
               });
 
-              if (fdResponse.data && fdResponse.data.status === 'FINISHED') {
-                await this.processFinishedMatch(match, {
-                  source: 'FOOTBALL_DATA',
-                  homeScore: fdResponse.data.score.fullTime.home,
-                  awayScore: fdResponse.data.score.fullTime.away,
-                  status: 'FINISHED'
-                });
-                updateResults.updated++;
-                resultFound = true;
+              if (!fdResponse.data) {
+                console.log(`⚠️ No data found in Football-Data.org for match ${match._id}`);
+              } else {
+                console.log(`📌 Match status from Football-Data.org: ${fdResponse.data.status}`);
+                
+                if (fdResponse.data.status === 'FINISHED') {
+                  const homeScore = fdResponse.data.score.fullTime.home;
+                  const awayScore = fdResponse.data.score.fullTime.away;
+                  console.log(`✨ Processing finished match ${match._id} [Score: ${homeScore}-${awayScore}]`);
+                  
+                  await this.processFinishedMatch(match, {
+                    source: 'FOOTBALL_DATA',
+                    homeScore: homeScore,
+                    awayScore: awayScore,
+                    status: 'FINISHED'
+                  });
+                  updateResults.updated++;
+                  resultFound = true;
+                }
               }
             } catch (err) {
-              console.warn(`Football-Data.org update failed for match ${match._id}:`, err.message);
+              console.error(`❌ Football-Data.org update failed for match ${match._id}:`, err.message);
+              if (err.response) {
+                console.error(`Response status: ${err.response.status}`);
+                console.error('Response data:', err.response.data);
+              }
             }
           }
 
@@ -108,10 +135,25 @@ const resultService = {
         }
       }
       
-      console.log('✅ Results update completed', updateResults);
-      return updateResults;
+      const summary = `
+📊 Results Update Summary
+========================
+Total matches checked: ${updateResults.total}
+Updates completed:    ${updateResults.updated}
+Matches skipped:     ${updateResults.skipped}
+Failed updates:      ${updateResults.failed}
+========================`;
+      
+      console.log(summary);
+      return {
+        ...updateResults,
+        message: updateResults.updated > 0 ? 
+          `Successfully updated ${updateResults.updated} matches` : 
+          'No matches needed updating'
+      };
     } catch (error) {
       console.error('❌ Error updating results:', error.message);
+      console.error('Stack trace:', error.stack);
       throw error;
     }
   },

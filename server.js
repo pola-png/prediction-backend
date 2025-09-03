@@ -29,6 +29,7 @@ if (missingVars.length > 0) {
 const matchRoutes = require('./appRoutes/matchRoutes');
 const predictionRoutes = require('./appRoutes/predictionRoutes');
 const resultRoutes = require('./appRoutes/resultRoutes');
+const seedRoutes = require('./appRoutes/seedRoutes');
 
 // Services
 const liveUpdateService = require('./appServices/liveUpdateService');
@@ -47,6 +48,7 @@ app.use(morgan('dev'));
 // Routes
 const cronRoutes = require('./appRoutes/cronRoutes');
 app.use('/cron', cronRoutes);
+app.use('/seed', seedRoutes);
 
 // API Routes
 app.use('/api/matches', matchRoutes);
