@@ -4,7 +4,7 @@ const seedService = require('../appServices/seedService');
 
 /**
  * @route POST /seed/teams
- * @desc Seed database with teams from API-Football
+ * @desc Seed database with teams from matches
  * @access Private
  */
 router.post('/teams', async (req, res) => {

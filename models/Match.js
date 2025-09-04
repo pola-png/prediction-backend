@@ -1,21 +1,21 @@
 const mongoose = require("mongoose");
 
 const matchSchema = new mongoose.Schema({
-  homeTeam: { type: mongoose.Schema.Types.ObjectId, ref: "Team", required: true },
-  awayTeam: { type: mongoose.Schema.Types.ObjectId, ref: "Team", required: true },
+  homeTeam: { type: String, required: true },
+  awayTeam: { type: String, required: true },
   date: { type: Date, required: true },
-  provider: { 
-    type: String, 
-    enum: ["football-data", "api-football", "manual", "football.json", "OpenLigaDB", "GitHub"], 
-    default: "manual" 
-  },
-  providerMatchId: { type: String, sparse: true },
-  league: String,
+  matchId: { type: String, required: true, unique: true },
+  competition: String,
   season: String,
+  source: { 
+    type: String, 
+    enum: ["footballjson", "openligadb", "github-archive"], 
+    required: true
+  },
   status: { 
     type: String, 
-    enum: ["SCHEDULED", "IN_PLAY", "PAUSED", "FINISHED", "CANCELLED", "POSTPONED"],
-    default: "SCHEDULED" 
+    enum: ["scheduled", "live", "completed", "cancelled", "postponed"],
+    default: "scheduled" 
   },
   minute: { type: Number, default: 0 },
   score: {
