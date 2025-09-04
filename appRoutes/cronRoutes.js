@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const resultService = require('../appServices/resultService');
 const predictionService = require('../appServices/predictionService');
+const updateService = require('../appServices/updateService');
 
 // Middleware to verify cron token
 const verifyCronToken = (req, res, next) => {
@@ -56,6 +57,30 @@ router.get('/health', verifyCronToken, (req, res) => {
     status: 'healthy',
     timestamp: new Date().toISOString()
   });
+});
+
+// Endpoint to update matches from all sources
+router.get('/updateMatches', verifyCronToken, async (req, res) => {
+  try {
+    // Respond immediately
+    res.status(200).json({
+      status: 'processing',
+      message: 'Update started from all sources',
+      timestamp: new Date().toISOString()
+    });
+
+    // Continue processing asynchronously
+    const result = await updateService.updateAllSources();
+    
+    console.log('✅ Matches updated successfully:', result.stats);
+    
+    // Log stats for each source
+    Object.entries(result.stats).forEach(([source, stats]) => {
+      console.log(`${source}: Processed ${stats.processed}, Updated ${stats.updated}`);
+    });
+  } catch (error) {
+    console.error('❌ Error updating matches:', error);
+  }
 });
 
 module.exports = router;

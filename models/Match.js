@@ -4,7 +4,11 @@ const matchSchema = new mongoose.Schema({
   homeTeam: { type: mongoose.Schema.Types.ObjectId, ref: "Team", required: true },
   awayTeam: { type: mongoose.Schema.Types.ObjectId, ref: "Team", required: true },
   date: { type: Date, required: true },
-  provider: { type: String, enum: ["football-data", "api-football", "manual"], default: "manual" },
+  provider: { 
+    type: String, 
+    enum: ["football-data", "api-football", "manual", "football.json", "OpenLigaDB", "GitHub"], 
+    default: "manual" 
+  },
   providerMatchId: { type: String, sparse: true },
   league: String,
   season: String,

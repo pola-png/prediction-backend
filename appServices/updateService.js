@@ -5,6 +5,60 @@ const { OPENLIGA_DB_SOURCES, API_URLS } = require('../utils/dataSources');
 class UpdateService {
   constructor() {
     this.API_BASE = API_URLS.OPENLIGA_DB;
+    this.FOOTBALL_JSON_URL = 'https://raw.githubusercontent.com/openfootball/football.json/master/2023-24/en.1.json';
+    this.GITHUB_DATASET_URL = 'https://raw.githubusercontent.com/openfootball/england/master/2023-24/1-premierleague.txt';
+  }
+
+  /**
+   * Fetch and update matches from all sources
+   * @returns {Promise<{success: boolean, stats: object}>}
+   */
+  async updateAllSources() {
+    try {
+      const [footballJsonData, openLigaData, githubData] = await Promise.all([
+        this.fetchFromFootballJson(),
+        this.fetchFromOpenLigaDB(),
+        this.fetchFromGitHubDataset()
+      ]);
+
+      const stats = {
+        footballJson: { processed: footballJsonData.length, updated: 0 },
+        openLigaDB: { processed: openLigaData.length, updated: 0 },
+        github: { processed: githubData.length, updated: 0 }
+      };
+
+      // Process all matches
+      for (const source of Object.keys(stats)) {
+        const matches = source === 'footballJson' ? footballJsonData :
+                       source === 'openLigaDB' ? openLigaData : githubData;
+        
+        for (const match of matches) {
+          try {
+            await Match.findOneAndUpdate(
+              {
+                homeTeam: match.homeTeam,
+                awayTeam: match.awayTeam,
+                date: match.date
+              },
+              {
+                ...match,
+                lastUpdated: new Date(),
+                source
+              },
+              { upsert: true, new: true }
+            );
+            stats[source].updated++;
+          } catch (err) {
+            console.error(`Error updating match from ${source}:`, err);
+          }
+        }
+      }
+
+      return { success: true, stats };
+    } catch (error) {
+      console.error('Error in updateAllSources:', error);
+      throw error;
+    }
   }
 
   /**
