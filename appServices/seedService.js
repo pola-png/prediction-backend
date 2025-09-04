@@ -1,5 +1,6 @@
 const axios = require('axios');
 const Match = require('../models/Match');
+const Team = require('../models/Team');
 
 // football.json sample repo
 const OPENFOOTBALL_BASE = "https://raw.githubusercontent.com/openfootball/football.json/master";
@@ -24,11 +25,6 @@ async function seedMatchesFromOpenFootball() {
     return { error: err.message };
   }
 }
-
-module.exports = { seedMatchesFromOpenFootball };
-const axios = require('axios');
-const Match = require('../models/Match');
-const Team = require('../models/Team');
 
 /**
  * Service for seeding match data using football.json
