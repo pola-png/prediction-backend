@@ -1,29 +1,82 @@
-const axios = require('axios');
 const Match = require('../models/Match');
 const Team = require('../models/Team');
+const footballJsonService = require('./sources/footballJsonService');
+const openLigaService = require('./sources/openLigaService');
 
-// football.json sample repo
-const OPENFOOTBALL_BASE = "https://raw.githubusercontent.com/openfootball/football.json/master";
+async function seedMatches() {
+    try {
+        let matches = [];
+        const sources = process.env.FOOTBALL_DATA_SOURCES?.split(',').map(s => s.trim()) || ['footballjson'];
 
-async function seedMatchesFromOpenFootball() {
-  try {
-    const seasonUrl = `${OPENFOOTBALL_BASE}/2023-24/en.1.json`; // Premier League example
-    const { data } = await axios.get(seasonUrl);
+        // Get matches from football.json
+        if (sources.includes('footballjson')) {
+            console.log('📥 Fetching matches from football.json...');
+            const jsonMatches = await footballJsonService.getMatches();
+            matches = matches.concat(jsonMatches);
+        }
 
-    const matches = data.matches.map(m => ({
-      homeTeam: m.team1,
-      awayTeam: m.team2,
-      date: new Date(m.date),
-      status: "upcoming",
-      source: "openfootball"
-    }));
+        // Get matches from OpenLigaDB
+        if (sources.includes('openligadb')) {
+            console.log('📡 Fetching matches from OpenLigaDB...');
+            const liveMatches = await openLigaService.getMatches();
+            matches = mergeMatches(matches, liveMatches);
+        }
 
-    await Match.insertMany(matches, { ordered: false });
-    return { inserted: matches.length };
-  } catch (err) {
-    console.error("❌ Failed to seed matches:", err.message);
-    return { error: err.message };
-  }
+        if (matches.length === 0) {
+            console.log("⚠️ No matches found from configured sources");
+            return { count: 0 };
+        }
+
+        console.log(`🔄 Upserting ${matches.length} matches to database...`);
+        
+        // Use bulkWrite for upsert operation
+        const operations = matches.map(match => ({
+            updateOne: {
+                filter: { matchId: match.matchId },
+                update: { $set: match },
+                upsert: true
+            }
+        }));
+
+        const result = await Match.bulkWrite(operations);
+        console.log('✅ Database update completed:', result);
+        
+        return {
+            count: matches.length,
+            modified: result.modifiedCount,
+            upserted: result.upsertedCount
+        };
+    } catch (err) {
+        console.error("❌ Failed to seed matches:", err);
+        throw err;
+    }
+}
+
+// Merge matches, preferring live data over static data
+function mergeMatches(baseMatches, liveMatches) {
+    const matchMap = new Map();
+    
+    // Index base matches
+    baseMatches.forEach(match => {
+        matchMap.set(match.matchId, match);
+    });
+    
+    // Overlay live matches
+    liveMatches.forEach(match => {
+        if (matchMap.has(match.matchId)) {
+            // Update existing match with live data
+            matchMap.set(match.matchId, {
+                ...matchMap.get(match.matchId),
+                ...match,
+                lastUpdated: new Date()
+            });
+        } else {
+            // Add new match
+            matchMap.set(match.matchId, match);
+        }
+    });
+    
+    return Array.from(matchMap.values());
 }
 
 /**

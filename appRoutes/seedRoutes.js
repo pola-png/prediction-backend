@@ -1,8 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const seedService = require('../appServices/seedService');
-const { seedMatches, seedHistorical } = require('../appServices/seeder');
-const sources = require('../config/sources');
 
 /**
  * @route POST /seed/teams
@@ -38,14 +36,9 @@ router.post('/teams', async (req, res) => {
 router.post('/matches', async (req, res) => {
   console.log('🌱 Received seed matches request');
   
-  // Log headers for debugging
-  console.log('Headers received:', req.headers);
-  
   const token = req.headers['x-admin-token'];
   if (!token || token !== process.env.ADMIN_TOKEN) {
-    console.log('❌ Authentication failed. Token mismatch or missing');
-    console.log('Received token:', token);
-    console.log('Expected token:', process.env.ADMIN_TOKEN);
+    console.log('❌ Authentication failed');
     return res.status(401).json({ 
       error: 'Unauthorized',
       message: 'Invalid or missing x-admin-token header'
@@ -54,9 +47,13 @@ router.post('/matches', async (req, res) => {
 
   try {
     console.log('✅ Authentication successful, starting seed process...');
-  const result = await seedService.seedMatchesFromOpenFootball();
-  console.log('✅ Seed process completed:', result);
-  res.json(result);
+    const result = await seedService.seedMatches();
+    console.log('✅ Seed process completed:', result);
+    res.json({ 
+      status: 'success',
+      message: 'Matches seeded successfully',
+      ...result
+    });
   } catch (err) {
     console.error('❌ Seed route error:', err);
     console.error('Stack trace:', err.stack);
