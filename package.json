@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/package",
   "name": "prediction-backend",
   "version": "1.0.0",
   "description": "AI football prediction backend with live updates",
