@@ -1,13 +1,41 @@
 const axios = require('axios');
 const Match = require('../models/Match');
 const Team = require('../models/Team');
-const { FOOTBALL_JSON_SOURCES } = require('../utils/dataSources');
 
 /**
- * Service for seeding match data
- * @type {Object}
+ * Service for seeding match data using football.json
  */
-const seedService = {
+class SeedService {
+  constructor() {
+    this.sources = {
+      'PL': {
+        url: 'https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/en.1.json',
+        name: 'Premier League',
+        country: 'England'
+      },
+      'BL': {
+        url: 'https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/de.1.json',
+        name: 'Bundesliga',
+        country: 'Germany'
+      },
+      'SA': {
+        url: 'https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/it.1.json',
+        name: 'Serie A',
+        country: 'Italy'
+      },
+      'LL': {
+        url: 'https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/es.1.json',
+        name: 'La Liga',
+        country: 'Spain'
+      },
+      'L1': {
+        url: 'https://raw.githubusercontent.com/openfootball/football.json/master/2025-26/fr.1.json',
+        name: 'Ligue 1',
+        country: 'France'
+      }
+    };
+  }
+
   /**
    * Seeds initial team data into the database from football.json data
    * @returns {Promise<{count: number}>}
@@ -18,7 +46,7 @@ const seedService = {
     try {
       let allTeams = new Set();
 
-      for (const [leagueCode, league] of Object.entries(FOOTBALL_JSON_SOURCES)) {
+      for (const [leagueCode, league] of Object.entries(this.sources)) {
         console.log(`📥 Fetching teams for ${league.name}...`);
         try {
           const { data } = await axios.get(league.url);
@@ -83,45 +111,68 @@ const seedService = {
       console.error('❌ Team seeding failed:', error.message);
       throw error;
     }
-  },
+  }
 
   /**
-   * Seeds matches from OpenFootball JSON data
+   * Seeds matches from football.json data
    * @returns {Promise<{count: number, errors: number}>}
    */
   async seedUpcomingMatches() {
     console.log('🌱 Starting database seeding process from football.json...');
 
     try {
-      console.log('📅 Fetching matches from football.json sources...');
-      
       let totalMatches = 0;
       let errorCount = 0;
 
-      for (const [leagueCode, dataUrl] of Object.entries(FOOTBALL_DATA_SOURCES)) {
-        console.log(`\n📊 Processing ${leagueCode} from ${dataUrl}...`);
+      for (const [leagueCode, source] of Object.entries(this.sources)) {
+        console.log(`\n📊 Processing ${source.name}...`);
         
         try {
-          const { data } = await axios.get(dataUrl);
+          console.log(`📥 Fetching data from: ${source.url}`);
+          const { data } = await axios.get(source.url);
 
           if (!data.matches || data.matches.length === 0) {
-            console.log(`⚠️ No matches found for ${leagueCode}`);
+            console.log(`⚠️ No matches found for ${source.name}`);
             continue;
           }
 
-          console.log(`Found ${data.matches.length} matches for ${leagueCode}`);
+          console.log(`Found ${data.matches.length} matches for ${source.name}`);
 
           for (const match of data.matches) {
             try {
-              const matchId = `${match.date}_${match.team1}_${match.team2}`;
-              
+              // Find or create teams
+              const [homeTeam, awayTeam] = await Promise.all([
+                Team.findOneAndUpdate(
+                  { name: match.team1 },
+                  { 
+                    name: match.team1,
+                    leagues: [leagueCode],
+                    country: source.country
+                  },
+                  { upsert: true, new: true }
+                ),
+                Team.findOneAndUpdate(
+                  { name: match.team2 },
+                  { 
+                    name: match.team2,
+                    leagues: [leagueCode],
+                    country: source.country
+                  },
+                  { upsert: true, new: true }
+                )
+              ]);
+
+              // Create or update match
               await Match.updateOne(
-                { matchId },
                 {
-                  matchId,
                   date: new Date(match.date),
-                  homeTeam: match.team1,
-                  awayTeam: match.team2,
+                  homeTeam: homeTeam._id,
+                  awayTeam: awayTeam._id
+                },
+                {
+                  date: new Date(match.date),
+                  homeTeam: homeTeam._id,
+                  awayTeam: awayTeam._id,
                   score: match.score ? {
                     home: match.score.ft[0],
                     away: match.score.ft[1]
@@ -129,7 +180,8 @@ const seedService = {
                   status: match.score ? 'FINISHED' : 'SCHEDULED',
                   competition: {
                     code: leagueCode,
-                    name: data.name || `League ${leagueCode}`
+                    name: source.name,
+                    country: source.country
                   },
                   updatedAt: new Date()
                 },
@@ -137,32 +189,32 @@ const seedService = {
               );
 
               totalMatches++;
+              console.log(`✅ Processed: ${match.team1} vs ${match.team2}`);
             } catch (err) {
               console.error(`❌ Error processing match: ${err.message}`);
               errorCount++;
             }
           }
         } catch (err) {
-          console.error(`❌ Error fetching ${leagueCode} data:`, err.message);
+          console.error(`❌ Error fetching ${source.name} data:`, err.message);
           errorCount++;
         }
       }
 
-      const summary = `
+      console.log(`
 📊 Seeding Summary
 =================
 Total matches processed: ${totalMatches}
 Errors encountered: ${errorCount}
-=================`;
+=================`);
       
-      console.log(summary);
       return { count: totalMatches, errors: errorCount };
 
     } catch (error) {
       console.error('❌ Seeding process failed:', error.message);
       throw error;
     }
-  },
+  }
 
   /**
    * Manually seed a match for testing
@@ -173,28 +225,40 @@ Errors encountered: ${errorCount}
     try {
       console.log('🌱 Seeding test match...');
       
-      const matchId = `${matchData.date}_${matchData.homeTeam}_${matchData.awayTeam}`;
-      
-      const match = await Match.findOneAndUpdate(
-        { matchId },
-        {
-          matchId,
-          date: new Date(matchData.date),
-          homeTeam: matchData.homeTeam,
-          awayTeam: matchData.awayTeam,
-          status: 'SCHEDULED',
-          updatedAt: new Date()
-        },
-        { upsert: true, new: true }
-      );
+      // Find or create teams
+      const [homeTeam, awayTeam] = await Promise.all([
+        Team.findOneAndUpdate(
+          { name: matchData.homeTeam },
+          { name: matchData.homeTeam },
+          { upsert: true, new: true }
+        ),
+        Team.findOneAndUpdate(
+          { name: matchData.awayTeam },
+          { name: matchData.awayTeam },
+          { upsert: true, new: true }
+        )
+      ]);
 
-      console.log(`✅ Test match created: ${match.matchId}`);
-      return match;
+      const match = new Match({
+        homeTeam: homeTeam._id,
+        awayTeam: awayTeam._id,
+        date: new Date(matchData.date),
+        status: 'SCHEDULED',
+        competition: matchData.competition || {
+          code: 'TEST',
+          name: 'Test Match'
+        },
+        updatedAt: new Date()
+      });
+
+      const saved = await match.save();
+      console.log(`✅ Test match saved: ${saved._id}`);
+      return saved;
     } catch (error) {
-      console.error('❌ Error creating test match:', error.message);
+      console.error('❌ Error seeding test match:', error.message);
       throw error;
     }
   }
-};
+}
 
-module.exports = seedService;
+module.exports = new SeedService();
