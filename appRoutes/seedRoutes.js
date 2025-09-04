@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const seedService = require('../appServices/seedService');
+const { seedMatches, seedHistorical } = require('../appServices/seeder');
+const sources = require('../config/sources');
 
 /**
  * @route POST /seed/teams
@@ -52,12 +54,9 @@ router.post('/matches', async (req, res) => {
 
   try {
     console.log('✅ Authentication successful, starting seed process...');
-    const result = await seedService.seedUpcomingMatches();
-    console.log('✅ Seed process completed:', result);
-    res.json({ 
-      message: 'Matches seeded successfully', 
-      count: result.count 
-    });
+  const result = await seedService.seedMatchesFromOpenFootball();
+  console.log('✅ Seed process completed:', result);
+  res.json(result);
   } catch (err) {
     console.error('❌ Seed route error:', err);
     console.error('Stack trace:', err.stack);
@@ -92,6 +91,45 @@ router.post('/test-match', async (req, res) => {
       status: 'error', 
       message: 'Failed to seed test match',
       error: err.message 
+    });
+  }
+});
+
+/**
+ * @route POST /seed/init
+ * @desc Initial bulk seeding of matches from both current and historical data
+ * @access Private
+ */
+router.post('/init', async (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token || token !== process.env.ADMIN_TOKEN) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    console.log('🌱 Starting bulk initialization...');
+    
+    // First seed current season matches
+    const currentCount = await seedMatches(sources);
+    console.log(`✅ Seeded ${currentCount} current season matches`);
+    
+    // Then add historical data
+    const historicalCount = await seedHistorical();
+    console.log(`✅ Seeded ${historicalCount} historical matches`);
+    
+    res.json({
+      status: 'success',
+      message: 'Database initialized successfully',
+      current: currentCount,
+      historical: historicalCount,
+      total: currentCount + historicalCount
+    });
+  } catch (err) {
+    console.error('❌ Bulk initialization failed:', err);
+    res.status(500).json({
+      status: 'error',
+      message: 'Failed to initialize database',
+      error: err.message
     });
   }
 });

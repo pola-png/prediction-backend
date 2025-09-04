@@ -3,6 +3,8 @@ const router = express.Router();
 const resultService = require('../appServices/resultService');
 const predictionService = require('../appServices/predictionService');
 const updateService = require('../appServices/updateService');
+const { seedMatches, seedHistorical } = require('../appServices/seeder');
+const sources = require('../config/sources');
 
 // Middleware to verify cron token
 const verifyCronToken = (req, res, next) => {
@@ -12,6 +14,23 @@ const verifyCronToken = (req, res, next) => {
   }
   next();
 };
+
+// Endpoint to update matches from all configured sources
+router.get('/updateMatches', verifyCronToken, async (req, res) => {
+  try {
+    console.log('📥 Starting match updates from configured sources:', sources);
+    const count = await seedMatches(sources);
+    
+    res.json({
+      status: 'ok',
+      message: `Updated ${count} matches`,
+      timestamp: new Date()
+    });
+  } catch (err) {
+    console.error('❌ updateMatches failed:', err);
+    res.status(500).json({ error: 'Update failed', details: err.message });
+  }
+});
 
 // Endpoint to update match results
 router.get('/update-results', async (req, res) => {

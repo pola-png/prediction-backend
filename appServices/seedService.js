@@ -1,5 +1,33 @@
 const axios = require('axios');
 const Match = require('../models/Match');
+
+// football.json sample repo
+const OPENFOOTBALL_BASE = "https://raw.githubusercontent.com/openfootball/football.json/master";
+
+async function seedMatchesFromOpenFootball() {
+  try {
+    const seasonUrl = `${OPENFOOTBALL_BASE}/2023-24/en.1.json`; // Premier League example
+    const { data } = await axios.get(seasonUrl);
+
+    const matches = data.matches.map(m => ({
+      homeTeam: m.team1,
+      awayTeam: m.team2,
+      date: new Date(m.date),
+      status: "upcoming",
+      source: "openfootball"
+    }));
+
+    await Match.insertMany(matches, { ordered: false });
+    return { inserted: matches.length };
+  } catch (err) {
+    console.error("❌ Failed to seed matches:", err.message);
+    return { error: err.message };
+  }
+}
+
+module.exports = { seedMatchesFromOpenFootball };
+const axios = require('axios');
+const Match = require('../models/Match');
 const Team = require('../models/Team');
 
 /**

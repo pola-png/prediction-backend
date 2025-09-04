@@ -4,22 +4,37 @@ services:
     runtime: node
     buildCommand: npm ci
     startCommand: node server.js
+    plan: free
+    region: frankfurt
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 10000
+        value: "10000"
       - key: MONGO_URI
         sync: false
-      - key: FOOTBALL_DATA_KEY
-        sync: false
-      - key: API_FOOTBALL_KEY
-        sync: false
-      - key: ENABLE_LIVE_UPDATES
-        value: "true"
+      - key: FOOTBALL_DATA_SOURCES
+        value: footballjson,openligadb
       - key: CRON_TOKEN
         sync: false
       - key: ADMIN_TOKEN
         sync: false
-    healthCheckPath: /
+    healthCheckPath: /health
     autoDeploy: true
+
+  - type: cron
+    name: update-matches
+    schedule: "*/40 * * * *"
+    runtime: node
+    buildCommand: npm ci
+    startCommand: >
+      curl -X GET "https://$RENDER_SERVICE_NAME.onrender.com/cron/updateMatches" 
+      -H "x-cron-token: $CRON_TOKEN"
+    envVars:
+      - key: RENDER_SERVICE_NAME
+        fromService:
+          name: prediction-backend
+          type: web
+          property: name
+      - key: CRON_TOKEN
+        sync: false
