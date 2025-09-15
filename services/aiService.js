@@ -19,15 +19,14 @@ const GenerateMatchPredictionsOutputSchema = z.object({
   bucket: z.enum(['vip', 'daily2', 'value5', 'big10']),
 });
 
-// Try models in this order (adjust per your Google AI Studio access)
+// Updated AI models fallback order
 const aiModels = [
   "gemini-2.5-flash",
   "gemini-2.5-pro",
   "gemini-2.0-flash",
   "gemini-2.0-pro",
-  "gemini-1.5-flash-preview",
-  "gemini-1.5-pro-preview",
-  "gemini-1.0"
+  "gemini-1.5-flash",
+  "gemini-1.5-pro"
 ];
 
 async function callGenerativeAI(prompt, outputSchema) {
@@ -43,8 +42,10 @@ async function callGenerativeAI(prompt, outputSchema) {
           const response = await result.response;
           const text = response.text();
           if (!text) throw new Error("AI returned empty response.");
+
           const jsonString = text.replace(/```json/g, "").replace(/```/g, "").trim();
           const parsed = JSON.parse(jsonString);
+
           if (Array.isArray(parsed)) return parsed.map(item => outputSchema.parse(item));
           return [outputSchema.parse(parsed)];
         } catch (err) {
@@ -57,7 +58,6 @@ async function callGenerativeAI(prompt, outputSchema) {
       }
     } catch (outerErr) {
       console.warn(`AI model ${modelName} unavailable: ${outerErr.message}`);
-      // try next model
     }
   }
   throw new Error("AI: All models failed to generate predictions.");
@@ -107,7 +107,8 @@ Focus on recent form, head-to-head, home advantage and goal trends. Keep it shor
       const model = genAI.getGenerativeModel({ model: modelName });
       const result = await model.generateContent(prompt);
       const response = await result.response;
-      return response.text();
+      const text = response.text();
+      if (text) return text;
     } catch (err) {
       console.warn(`AI summary failed for ${modelName}: ${err.message}`);
     }
