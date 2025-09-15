@@ -1,4 +1,3 @@
-
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { z } = require("zod");
 
@@ -7,6 +6,7 @@ if (!process.env.GEMINI_API_KEY) {
 }
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 
+// --- Schema for single prediction ---
 const GenerateMatchPredictionsOutputSchema = z.object({
   oneXTwo: z.object({ home: z.number(), draw: z.number(), away: z.number() }),
   doubleChance: z.object({ homeOrDraw: z.number(), homeOrAway: z.number(), drawOrAway: z.number() }),
@@ -19,76 +19,91 @@ const GenerateMatchPredictionsOutputSchema = z.object({
   bucket: z.enum(['vip', '2odds', '5odds', 'big10']),
 });
 
-async function callGenerativeAI(prompt, outputSchema) {
-    if (!genAI) throw new Error("Generative AI is not initialized. Check GEMINI_API_KEY.");
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-preview" });
-    
-    const maxRetries = 3;
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            const result = await model.generateContent(prompt);
-            const response = await result.response;
-            const text = response.text();
-            
-            if (!text) {
-                throw new Error("AI returned empty response.");
-            }
-
-            const jsonString = text.replace(/```json/g, "").replace(/```/g, "").trim();
-            const parsed = JSON.parse(jsonString);
-            return outputSchema.parse(parsed);
-        } catch(error) {
-            console.error(`AI: Call attempt ${i + 1} of ${maxRetries} failed. Error: ${error.message}`);
-            if (i === maxRetries - 1) {
-                throw new Error(`AI: Call failed after ${maxRetries} attempts: ${error.message}`);
-            }
-            await new Promise(res => setTimeout(res, 1000 * Math.pow(2, i)));
-        }
-    }
+// --- Convert probability (0-1) to decimal odds ---
+function probToOdds(prob) {
+  if (prob <= 0) return null;
+  return +(1 / prob).toFixed(2);
 }
 
-async function getPredictionFromAI(match, historicalMatches) {
-     const h2hMatches = historicalMatches.filter(
-        h => (h.homeTeam.name === match.homeTeam.name && h.awayTeam.name === match.awayTeam.name) ||
-             (h.homeTeam.name === match.awayTeam.name && h.awayTeam.name === match.homeTeam.name)
-    );
+async function callGenerativeAI(prompt, outputSchema) {
+  if (!genAI) throw new Error("Generative AI is not initialized. Check GEMINI_API_KEY.");
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-preview" });
 
-    const prompt = `
-You are an expert sports analyst. Generate a football match prediction in JSON format.
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
 
-Match Details: ${match.homeTeam.name} vs ${match.awayTeam.name}
+      if (!text) throw new Error("AI returned empty response.");
+
+      const jsonString = text.replace(/```json/g, "").replace(/```/g, "").trim();
+      const parsed = JSON.parse(jsonString);
+      return outputSchema.parse(parsed);
+    } catch (error) {
+      console.error(`AI: Attempt ${i + 1} failed. Error: ${error.message}`);
+      if (i === maxRetries - 1) throw new Error(`AI failed after ${maxRetries} attempts: ${error.message}`);
+      await new Promise(res => setTimeout(res, 1000 * Math.pow(2, i)));
+    }
+  }
+}
+
+// --- Get multiple predictions per match, filtered by confidence ---
+async function getPredictionsFromAI(match, historicalMatches, bucket, count = 3, minConfidence = 90) {
+  const h2hMatches = historicalMatches.filter(
+    h =>
+      (h.homeTeam.name === match.homeTeam.name && h.awayTeam.name === match.awayTeam.name) ||
+      (h.homeTeam.name === match.awayTeam.name && h.awayTeam.name === match.homeTeam.name)
+  );
+
+  const prompt = `
+You are an expert sports analyst. Generate ${count} ${bucket} football match predictions in JSON array format.
+
+Match: ${match.homeTeam.name} vs ${match.awayTeam.name}
 League: ${match.leagueCode}
 Date: ${match.matchDateUtc}
 
-Historical Head-to-Head:
+Historical H2H:
 ${h2hMatches.map(m => `- ${new Date(m.matchDateUtc).toLocaleDateString()}: ${m.homeTeam.name} ${m.homeGoals} - ${m.awayGoals} ${m.awayTeam.name}`).join('\n') || 'No direct H2H data available.'}
 
-Based on this, provide probabilities (0-1) for:
+Provide probabilities (0-1) for:
 - 1X2 (home, draw, away)
 - Double Chance (home/draw, home/away, draw/away)
 - Over/Under 0.5, 1.5, 2.5 goals
 - Both Teams to Score (BTTS) Yes/No
-- A confidence score (0-100)
-- A prediction bucket ('vip', '2odds', '5odds', 'big10')
+- Confidence (0-100)
+- Prediction bucket ('${bucket}')
 
-Your response MUST be a valid JSON object that conforms to the Zod schema provided.
-Do not wrap the JSON in markdown backticks.
+Return a JSON array with ${count} predictions. Ensure confidence is >= ${minConfidence} where possible.
 `;
-    return await callGenerativeAI(prompt, GenerateMatchPredictionsOutputSchema);
+
+  const rawPredictions = await callGenerativeAI(prompt, z.array(GenerateMatchPredictionsOutputSchema));
+
+  // Add decimal odds for 1X2
+  const predictionsWithOdds = rawPredictions.map(p => ({
+    ...p,
+    odds: {
+      home: probToOdds(p.oneXTwo.home),
+      draw: probToOdds(p.oneXTwo.draw),
+      away: probToOdds(p.oneXTwo.away)
+    }
+  }));
+
+  return predictionsWithOdds;
 }
 
-
+// --- Single match summary ---
 async function getSummaryFromAI(match) {
-    if (!genAI) throw new Error("Generative AI is not initialized. Check GEMINI_API_KEY.");
-    const prompt = `Provide a concise summary of the key insights and factors influencing the prediction for the match between ${match.homeTeam.name} and ${match.awayTeam.name}.
-
-    Focus on the most significant factors that contribute to the predicted outcomes, such as team form, head-to-head statistics, home advantage, and goal-scoring trends. Explain the rationale behind the prediction in a way that is easy to understand.
-    `;
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-preview" });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    return response.text();
+  if (!genAI) throw new Error("Generative AI is not initialized. Check GEMINI_API_KEY.");
+  const prompt = `
+Provide a concise summary of key insights for the match between ${match.homeTeam.name} and ${match.awayTeam.name}.
+Focus on team form, H2H stats, home advantage, and goal trends. Explain the rationale behind predictions clearly.
+  `;
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-preview" });
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  return response.text();
 }
 
-
-module.exports = { getPredictionFromAI, getSummaryFromAI };
+module.exports = { getPredictionsFromAI, getSummaryFromAI };
