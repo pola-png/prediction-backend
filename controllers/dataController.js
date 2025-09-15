@@ -1,6 +1,7 @@
+// controllers/dataController.js
 const Match = require('../models/Match');
 const Prediction = require('../models/Prediction');
-const { fetchAndStoreMatches, fetchAndStoreResults } = require('../services/cronService');
+const { fetchAndStoreMatches, generateAllPredictions, fetchAndStoreResults } = require('../services/cronService');
 const { getPredictionsFromAI } = require('../services/aiService');
 
 // --- Dashboard data (predictions grouped by buckets) ---
@@ -15,6 +16,7 @@ exports.getDashboardData = async (req, res) => {
         .sort({ createdAt: -1 })
         .lean();
 
+      // Group predictions per match and take up to 5 per group
       const grouped = predictions.reduce((acc, p) => {
         const matchId = p.matchId._id.toString();
         if (!acc[matchId]) acc[matchId] = [];
@@ -32,7 +34,7 @@ exports.getDashboardData = async (req, res) => {
   }
 };
 
-// --- Predictions by bucket ---
+// --- Predictions by bucket (grouped by match) ---
 exports.getPredictionsByBucket = async (req, res) => {
   try {
     const bucket = req.params.bucket;
@@ -55,7 +57,7 @@ exports.getPredictionsByBucket = async (req, res) => {
   }
 };
 
-// --- All Results (finished matches) with prediction outcomes ---
+// --- All Results (finished matches) with stored prediction statuses ---
 exports.getResults = async (req, res) => {
   try {
     const results = await Match.find({ status: "finished" })
@@ -68,11 +70,6 @@ exports.getResults = async (req, res) => {
 
     const resultsWithOutcome = results.map(match => {
       const matchPredictions = predictions.filter(p => p.matchId.toString() === match._id.toString());
-      matchPredictions.forEach(p => {
-        const predictedWinner = p.oneXTwo.home > p.oneXTwo.away ? "home" : p.oneXTwo.home < p.oneXTwo.away ? "away" : "draw";
-        const actualWinner = match.homeGoals > match.awayGoals ? "home" : match.homeGoals < match.awayGoals ? "away" : "draw";
-        p.outcome = predictedWinner === actualWinner ? "won" : "lost";
-      });
       return { ...match, predictions: matchPredictions };
     });
 
@@ -96,11 +93,6 @@ exports.getRecentResults = async (req, res) => {
 
     const resultsWithOutcome = results.map(match => {
       const matchPredictions = predictions.filter(p => p.matchId.toString() === match._id.toString());
-      matchPredictions.forEach(p => {
-        const predictedWinner = p.oneXTwo.home > p.oneXTwo.away ? "home" : p.oneXTwo.home < p.oneXTwo.away ? "away" : "draw";
-        const actualWinner = match.homeGoals > match.awayGoals ? "home" : match.homeGoals < match.awayGoals ? "away" : "draw";
-        p.outcome = predictedWinner === actualWinner ? "won" : "lost";
-      });
       return { ...match, predictions: matchPredictions };
     });
 
@@ -117,19 +109,9 @@ exports.getMatchSummary = async (req, res) => {
     const match = await Match.findById(req.params.matchId)
       .populate("homeTeam awayTeam")
       .lean();
-
     if (!match) return res.status(404).json({ error: "Match not found" });
 
     const predictions = await Prediction.find({ matchId: match._id }).lean();
-
-    predictions.forEach(p => {
-      if (match.status === "finished") {
-        const predictedWinner = p.oneXTwo.home > p.oneXTwo.away ? "home" : p.oneXTwo.home < p.oneXTwo.away ? "away" : "draw";
-        const actualWinner = match.homeGoals > match.awayGoals ? "home" : match.homeGoals < match.awayGoals ? "away" : "draw";
-        p.outcome = predictedWinner === actualWinner ? "won" : "lost";
-      }
-    });
-
     res.json({ ...match, predictions });
   } catch (err) {
     console.error("API: Failed to fetch match summary:", err.message);
@@ -137,7 +119,7 @@ exports.getMatchSummary = async (req, res) => {
   }
 };
 
-// --- Upcoming Matches with AI predictions (multi-model, pre-save) ---
+// --- Upcoming Matches with AI predictions (multi-predictions; pre-save) ---
 exports.getUpcomingMatches = async (req, res) => {
   try {
     const upcoming = await Match.find({ status: { $in: ["scheduled", "upcoming", "tba"] } })
@@ -146,23 +128,48 @@ exports.getUpcomingMatches = async (req, res) => {
       .limit(20)
       .lean();
 
-    const historicalMatches = await Match.find({ status: "finished" })
+    const historical = await Match.find({ status: "finished" })
       .populate("homeTeam awayTeam")
       .lean();
 
     const upcomingWithPredictions = await Promise.all(
       upcoming.map(async (match) => {
-        const predictions = await getPredictionsFromAI(match, historicalMatches);
+        try {
+          const predictions = await getPredictionsFromAI(match, historical);
 
-        for (const p of predictions) {
-          await Prediction.findOneAndUpdate(
-            { matchId: match._id, bucket: p.bucket },
-            { ...p, matchId: match._id },
-            { upsert: true, new: true }
-          );
+          // Save each prediction into DB (upsert)
+          const savedPreds = [];
+          for (const p of predictions) {
+            const saved = await Prediction.findOneAndUpdate(
+              { matchId: match._id, bucket: p.bucket },
+              {
+                matchId: match._id,
+                version: 'ai-2x',
+                outcomes: {
+                  oneXTwo: p.oneXTwo,
+                  doubleChance: p.doubleChance,
+                  over05: p.over05,
+                  over15: p.over15,
+                  over25: p.over25,
+                  bttsYes: p.bttsYes,
+                  bttsNo: p.bttsNo,
+                },
+                confidence: p.confidence,
+                bucket: p.bucket,
+                status: 'pending'
+              },
+              { upsert: true, new: true }
+            );
+            savedPreds.push(saved);
+          }
+
+          return { ...match, predictions: savedPreds };
+        } catch (err) {
+          console.warn(`API: AI predictions failed for match ${match._id}: ${err.message || err}`);
+          // fallback: return any existing predictions we have
+          const existing = await Prediction.find({ matchId: match._id }).lean();
+          return { ...match, predictions: existing };
         }
-
-        return { ...match, predictions };
       })
     );
 
@@ -189,11 +196,11 @@ exports.getRecentMatches = async (req, res) => {
   }
 };
 
-// --- CRON Triggers ---
+// --- CRON endpoints ---
 exports.runFetchMatches = async (req, res) => {
   try {
     const result = await fetchAndStoreMatches();
-    res.json({ success: true, message: "fetch-matches job started", result });
+    res.json({ success: true, result });
   } catch (err) {
     console.error("CRON API: Failed fetch-matches:", err.message);
     res.status(500).json({ error: "Failed to fetch matches" });
@@ -202,33 +209,8 @@ exports.runFetchMatches = async (req, res) => {
 
 exports.runGeneratePredictions = async (req, res) => {
   try {
-    const upcoming = await Match.find({ status: { $in: ["scheduled", "upcoming", "tba"] } })
-      .populate("homeTeam awayTeam")
-      .sort({ matchDateUtc: 1 })
-      .lean();
-
-    const historicalMatches = await Match.find({ status: "finished" })
-      .populate("homeTeam awayTeam")
-      .lean();
-
-    const allResults = [];
-    for (const match of upcoming) {
-      try {
-        const predictions = await getPredictionsFromAI(match, historicalMatches);
-        for (const p of predictions) {
-          const saved = await Prediction.findOneAndUpdate(
-            { matchId: match._id, bucket: p.bucket },
-            { ...p, matchId: match._id },
-            { upsert: true, new: true }
-          );
-          allResults.push(saved);
-        }
-      } catch (err) {
-        console.error(`Failed AI prediction for match ${match._id}: ${err.message}`);
-      }
-    }
-
-    res.json({ success: true, message: "generate-predictions job completed", resultCount: allResults.length });
+    const result = await generateAllPredictions();
+    res.json({ success: true, result });
   } catch (err) {
     console.error("CRON API: Failed generate-predictions:", err.message);
     res.status(500).json({ error: "Failed to generate predictions" });
@@ -238,7 +220,7 @@ exports.runGeneratePredictions = async (req, res) => {
 exports.runFetchResults = async (req, res) => {
   try {
     const result = await fetchAndStoreResults();
-    res.json({ success: true, message: "fetch-results job started", result });
+    res.json({ success: true, result });
   } catch (err) {
     console.error("CRON API: Failed fetch-results:", err.message);
     res.status(500).json({ error: "Failed to fetch results" });
