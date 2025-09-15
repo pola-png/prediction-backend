@@ -21,10 +21,14 @@ const GenerateMatchPredictionsOutputSchema = z.object({
   bucket: z.enum(['vip', '2odds', '5odds', 'big10']),
 });
 
-// List of AI models to try (fallback order)
+// ✅ Updated AI models (latest → oldest)
 const aiModels = [
+  "gemini-2.5-flash",        // 🔥 Fastest + latest (free tier expected)
+  "gemini-2.5-pro",          // More accurate, may require billing
+  "gemini-2.0-flash",        // Stable & fast
+  "gemini-2.0-pro",          // More powerful
   "gemini-1.5-flash-preview",
-  "gemini-1.5-preview",
+  "gemini-1.5-pro-preview",
   "gemini-1.0"
 ];
 
