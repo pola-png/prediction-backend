@@ -69,7 +69,7 @@ exports.getPredictionsByBucket = async (req, res) => {
   }
 };
 
-// ✅ Upcoming matches (new endpoint)
+// ✅ Upcoming matches (for /api/upcoming)
 exports.getUpcomingMatches = async (req, res) => {
   try {
     const upcomingMatches = await Match.find({
@@ -88,7 +88,7 @@ exports.getUpcomingMatches = async (req, res) => {
   }
 };
 
-// ✅ Recent results (new endpoint)
+// ✅ Recent matches (for /api/recent)
 exports.getRecentMatches = async (req, res) => {
   try {
     const matches = await Match.find({ status: 'finished' })
