@@ -1,3 +1,4 @@
+// models/Prediction.js
 const mongoose = require('mongoose');
 const { Schema } = mongoose;
 
@@ -30,7 +31,7 @@ const PredictionSchema = new Schema({
   },
   confidence: { type: Number, required: true },
   bucket: { type: String, required: true, enum: ['vip', '2odds', '5odds', 'big10'] },
-  status: { type: String, enum: ['pending', 'won', 'lost'], default: 'pending' } // ✅ New
+  status: { type: String, enum: ['pending', 'won', 'lost'], default: 'pending' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Prediction', PredictionSchema);
