@@ -1,6 +1,4 @@
-(!homeTeam || !awayTeam) continue;
-
-        const matchDateTime = new Date(`${matchData.date} ${matchData.time}`);
+  const matchDateTime = new Date(`${matchData.date} ${matchData.time}`);
 
         await Match.create({
             source: 'soccersapi',
