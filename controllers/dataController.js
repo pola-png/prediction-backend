@@ -15,15 +15,20 @@ function getOneXTwo(pred) {
 
 function applyPredictionStatus(match, predictions) {
   if (match.status !== 'finished') return predictions;
-  const actualWinner = match.homeGoals > match.awayGoals ? "home" : match.homeGoals < match.awayGoals ? "away" : "draw";
-  predictions.forEach(p => {
+  const actualWinner =
+    match.homeGoals > match.awayGoals ? "home" :
+    match.homeGoals < match.awayGoals ? "away" : "draw";
+
+  return predictions.map(p => {
     const oneXTwo = getOneXTwo(p);
     if (oneXTwo && !p.status) {
-      const predictedWinner = oneXTwo.home > oneXTwo.away ? "home" : oneXTwo.home < oneXTwo.away ? "away" : "draw";
+      const predictedWinner =
+        oneXTwo.home > oneXTwo.away ? "home" :
+        oneXTwo.home < oneXTwo.away ? "away" : "draw";
       p.status = predictedWinner === actualWinner ? "won" : "lost";
     }
+    return p;
   });
-  return predictions;
 }
 
 function groupPredictionsByMatch(predictions) {
@@ -35,6 +40,31 @@ function groupPredictionsByMatch(predictions) {
   }, {});
 }
 
+/* -------------------- Formatter -------------------- */
+function formatMatch(match, predictions = []) {
+  return {
+    id: match._id,
+    date: match.matchDateUtc,
+    status: match.status,
+    homeTeam: match.homeTeam
+      ? { id: match.homeTeam._id, name: match.homeTeam.name, logo: match.homeTeam.logo || null }
+      : null,
+    awayTeam: match.awayTeam
+      ? { id: match.awayTeam._id, name: match.awayTeam.name, logo: match.awayTeam.logo || null }
+      : null,
+    score: match.status === "finished"
+      ? { home: match.homeGoals, away: match.awayGoals }
+      : null,
+    predictions: predictions.map(p => ({
+      id: p._id,
+      bucket: p.bucket,
+      confidence: p.confidence,
+      outcomes: p.outcomes,
+      status: p.status || "pending"
+    }))
+  };
+}
+
 /* -------------------- Dashboard -------------------- */
 exports.getDashboardData = async (req, res) => {
   try {
@@ -43,12 +73,17 @@ exports.getDashboardData = async (req, res) => {
 
     for (const bucket of buckets) {
       const predictions = await Prediction.find({ bucket })
-        .populate('matchId')
+        .populate({
+          path: "matchId",
+          populate: ["homeTeam", "awayTeam"]
+        })
         .sort({ createdAt: -1 })
         .lean();
 
       const grouped = groupPredictionsByMatch(predictions);
-      data[bucket] = Object.values(grouped).map(g => g.slice(0, 5));
+      data[bucket] = Object.values(grouped).map(g =>
+        formatMatch(g[0].matchId, g)
+      ).slice(0, 5);
     }
 
     res.json({ success: true, data });
@@ -63,11 +98,19 @@ exports.getPredictionsByBucket = async (req, res) => {
   try {
     const bucket = req.params.bucket;
     const predictions = await Prediction.find({ bucket })
-      .populate('matchId')
+      .populate({
+        path: "matchId",
+        populate: ["homeTeam", "awayTeam"]
+      })
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json(Object.values(groupPredictionsByMatch(predictions)));
+    const grouped = groupPredictionsByMatch(predictions);
+    const formatted = Object.values(grouped).map(g =>
+      formatMatch(g[0].matchId, g)
+    );
+
+    res.json(formatted);
   } catch (err) {
     console.error("API: Failed to fetch predictions:", err.message);
     res.status(500).json({ error: "Failed to fetch predictions" });
@@ -84,10 +127,10 @@ async function fetchResultsWithPredictions(limit = 30) {
 
   const predictions = await Prediction.find({ matchId: { $in: results.map(r => r._id) } }).lean();
 
-  return results.map(match => ({
-    ...match,
-    predictions: applyPredictionStatus(match, predictions.filter(p => p.matchId.toString() === match._id.toString()))
-  }));
+  return results.map(match => {
+    const preds = applyPredictionStatus(match, predictions.filter(p => p.matchId.toString() === match._id.toString()));
+    return formatMatch(match, preds);
+  });
 }
 
 exports.getResults = async (req, res) => {
@@ -118,7 +161,7 @@ exports.getMatchSummary = async (req, res) => {
     if (!match) return res.status(404).json({ error: "Match not found" });
 
     const predictions = await Prediction.find({ matchId: match._id }).lean();
-    res.json({ ...match, predictions: applyPredictionStatus(match, predictions) });
+    res.json(formatMatch(match, applyPredictionStatus(match, predictions)));
   } catch (err) {
     console.error("API: Failed to fetch match summary:", err.message);
     res.status(500).json({ error: "Failed to fetch match summary" });
@@ -149,15 +192,7 @@ exports.getUpcomingMatches = async (req, res) => {
             {
               matchId: match._id,
               version: 'ai-2x',
-              outcomes: {
-                oneXTwo: p.oneXTwo,
-                doubleChance: p.doubleChance,
-                over05: p.over05,
-                over15: p.over15,
-                over25: p.over25,
-                bttsYes: p.bttsYes,
-                bttsNo: p.bttsNo,
-              },
+              outcomes: p,
               confidence: p.confidence,
               bucket: p.bucket,
               status: 'pending'
@@ -167,11 +202,11 @@ exports.getUpcomingMatches = async (req, res) => {
           savedPreds.push(saved);
         }
 
-        return { ...match, predictions: savedPreds };
+        return formatMatch(match, savedPreds);
       } catch (err) {
         console.warn(`API: AI predictions failed for match ${match._id}: ${err.message}`);
         const existing = await Prediction.find({ matchId: match._id }).lean();
-        return { ...match, predictions: existing };
+        return formatMatch(match, existing);
       }
     }));
 
@@ -189,7 +224,8 @@ exports.getRecentMatches = async (req, res) => {
       .sort({ matchDateUtc: -1 })
       .limit(10)
       .lean();
-    res.json(recent);
+
+    res.json(recent.map(m => formatMatch(m)));
   } catch (err) {
     console.error("API: Failed to fetch recent matches:", err.message);
     res.status(500).json({ error: "Failed to fetch recent matches" });
@@ -211,13 +247,12 @@ exports.getMatchHistory = async (req, res) => {
 
     const predictions = await Prediction.find({ matchId: { $in: matches.map(m => m._id) } }).lean();
 
-    const withPredictions = matches.map(match => ({
-      ...match,
-      predictions: applyPredictionStatus(
+    const withPredictions = matches.map(match =>
+      formatMatch(
         match,
-        predictions.filter(p => p.matchId.toString() === match._id.toString())
+        applyPredictionStatus(match, predictions.filter(p => p.matchId.toString() === match._id.toString()))
       )
-    }));
+    );
 
     res.json(withPredictions);
   } catch (err) {
