@@ -3,47 +3,18 @@ const Prediction = require('../models/Prediction');
 const { fetchAndStoreMatches, generateAllPredictions, fetchAndStoreResults } = require('../services/cronService');
 const { getPredictionFromAI } = require('../services/aiService');
 
-// --- Bucket Configuration (confidence thresholds + max picks per bucket) ---
-const BUCKET_CONFIG = {
-  vip: { minConfidence: 95, maxCount: 1, exactCount: 1 },
-  "2odds": { minConfidence: 90, maxCount: 3, exactCount: 3 },
-  "5odds": { minConfidence: 85, maxCount: 5 },
-  big10: { minConfidence: 80, maxCount: 10 },
-};
-
-// --- Helper: assign predictions to buckets with exact count rules ---
-function bucketPredictions(allPredictions) {
-  const bucketed = {};
-  for (const [bucket, config] of Object.entries(BUCKET_CONFIG)) {
-    let filtered = allPredictions
-      .filter(p => p.confidence >= config.minConfidence)
-      .sort((a, b) => b.confidence - a.confidence);
-
-    if (config.exactCount) {
-      filtered = filtered.slice(0, config.exactCount);
-      while (filtered.length < config.exactCount) filtered.push(null); // fill empty slots if not enough predictions
-    } else {
-      filtered = filtered.slice(0, config.maxCount);
-    }
-
-    bucketed[bucket] = filtered;
-  }
-  return bucketed;
-}
-
 // --- Dashboard data (predictions grouped by buckets) ---
 exports.getDashboardData = async (req, res) => {
   try {
-    const buckets = Object.keys(BUCKET_CONFIG);
+    const buckets = ["vip", "daily2", "value5", "big10"];
     const data = {};
 
     for (const bucket of buckets) {
-      const predictions = await Prediction.find({ bucket })
+      data[bucket] = await Prediction.find({ bucket })
         .populate('matchId')
         .sort({ createdAt: -1 })
-        .limit(20)
+        .limit(5)
         .lean();
-      data[bucket] = bucketPredictions(predictions);
     }
 
     res.json({ success: true, data });
@@ -63,7 +34,7 @@ exports.getPredictionsByBucket = async (req, res) => {
       .limit(20)
       .lean();
 
-    res.json(bucketPredictions(predictions));
+    res.json(predictions);
   } catch (err) {
     console.error("API: Failed to fetch predictions:", err.message);
     res.status(500).json({ error: "Failed to fetch predictions" });
@@ -109,10 +80,9 @@ exports.getMatchSummary = async (req, res) => {
       .populate("homeTeam awayTeam prediction")
       .lean();
 
-    if (!match) return res.status(404).json({ error: "Match not found" });
-
-    const predictions = await Prediction.find({ matchId: match._id }).lean();
-    match.predictions = bucketPredictions(predictions);
+    if (!match) {
+      return res.status(404).json({ error: "Match not found" });
+    }
 
     res.json(match);
   } catch (err) {
@@ -121,7 +91,7 @@ exports.getMatchSummary = async (req, res) => {
   }
 };
 
-// --- Upcoming Matches with AI + stored predictions ---
+// --- Upcoming Matches with AI predictions for all buckets ---
 exports.getUpcomingMatches = async (req, res) => {
   try {
     const upcoming = await Match.find({ status: { $in: ["scheduled", "upcoming", "tba"] } })
@@ -130,32 +100,36 @@ exports.getUpcomingMatches = async (req, res) => {
       .limit(20)
       .lean();
 
-    const matchIds = upcoming.map(m => m._id);
-    const storedPredictions = await Prediction.find({ matchId: { $in: matchIds } }).lean();
+    const historicalMatches = await Match.find({ status: "finished" })
+      .populate("homeTeam awayTeam")
+      .lean();
 
-    const combinedMatches = await Promise.all(upcoming.map(async match => {
-      const historicalMatches = await Match.find({
-        $or: [
-          { "homeTeam.name": match.homeTeam.name, "awayTeam.name": match.awayTeam.name },
-          { "homeTeam.name": match.awayTeam.name, "awayTeam.name": match.homeTeam.name }
-        ],
-        status: "finished"
-      }).lean();
+    const upcomingWithPredictions = await Promise.all(
+      upcoming.map(async match => {
+        const buckets = ["vip", "2odds", "5odds", "big10"];
+        const predictionsByBucket = {};
 
-      let aiPrediction = null;
-      try {
-        aiPrediction = await getPredictionFromAI(match, historicalMatches);
-      } catch (err) {
-        console.error(`AI prediction failed for match ${match._id}:`, err.message);
-      }
+        await Promise.all(
+          buckets.map(async bucket => {
+            try {
+              const aiPrediction = await getPredictionFromAI(match, historicalMatches);
+              if (aiPrediction.bucket === bucket) {
+                predictionsByBucket[bucket] = aiPrediction;
+              } else {
+                predictionsByBucket[bucket] = null;
+              }
+            } catch (err) {
+              console.error(`AI: Failed for match ${match._id} bucket ${bucket}: ${err.message}`);
+              predictionsByBucket[bucket] = null;
+            }
+          })
+        );
 
-      const matchStoredPredictions = storedPredictions.filter(p => p.matchId.toString() === match._id.toString());
-      const allPredictions = aiPrediction ? [aiPrediction, ...matchStoredPredictions] : matchStoredPredictions;
+        return { ...match, predictions: predictionsByBucket };
+      })
+    );
 
-      return { ...match, predictions: bucketPredictions(allPredictions) };
-    }));
-
-    res.json(combinedMatches);
+    res.json(upcomingWithPredictions);
   } catch (err) {
     console.error("API: Failed to fetch upcoming matches:", err.message);
     res.status(500).json({ error: "Failed to fetch upcoming matches" });
@@ -171,15 +145,7 @@ exports.getRecentMatches = async (req, res) => {
       .limit(10)
       .lean();
 
-    const matchIds = recent.map(m => m._id);
-    const storedPredictions = await Prediction.find({ matchId: { $in: matchIds } }).lean();
-
-    const combined = recent.map(match => {
-      const matchPredictions = storedPredictions.filter(p => p.matchId.toString() === match._id.toString());
-      return { ...match, predictions: bucketPredictions(matchPredictions) };
-    });
-
-    res.json(combined);
+    res.json(recent);
   } catch (err) {
     console.error("API: Failed to fetch recent matches:", err.message);
     res.status(500).json({ error: "Failed to fetch recent matches" });
