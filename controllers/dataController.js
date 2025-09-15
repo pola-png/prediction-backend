@@ -1,200 +1,154 @@
 const Match = require('../models/Match');
-const Team = require('../models/Team');
 const Prediction = require('../models/Prediction');
 const { fetchAndStoreMatches, generateAllPredictions, fetchAndStoreResults } = require('../services/cronService');
-const { getSummaryFromAI } = require('../services/aiService');
 
-// --- Frontend API Methods ---
-
-// Dashboard (still available, but frontend won’t rely on it directly anymore)
+// --- Dashboard data (predictions grouped by buckets) ---
 exports.getDashboardData = async (req, res) => {
   try {
-    const upcomingMatches = await Match.find({
-      status: { $in: ['scheduled', 'upcoming', 'tba'] },
-      prediction: { $exists: true }
-    })
-      .sort({ matchDateUtc: 1 })
-      .limit(5)
-      .populate('homeTeam awayTeam prediction')
-      .lean();
+    const buckets = ["vip", "daily2", "value5", "big10"];
+    const data = {};
 
-    const recentResults = await Match.find({ status: 'finished' })
-      .sort({ matchDateUtc: -1 })
-      .limit(5)
-      .populate('homeTeam awayTeam prediction')
-      .lean();
-
-    const buckets = ['vip', '2odds', '5odds', 'big10'];
-    const bucketCounts = {};
     for (const bucket of buckets) {
-      const matches = await Match.find({
-        status: { $in: ['scheduled', 'upcoming', 'tba'] }
-      }).populate({
-        path: 'prediction',
-        match: { bucket }
-      });
-
-      const filteredMatches = matches.filter(m => m.prediction);
-      bucketCounts[bucket] = filteredMatches.length;
+      data[bucket] = await Prediction.find({ bucket })
+        .populate('matchId')
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean();
     }
 
-    res.json({ upcomingMatches, recentResults, bucketCounts });
-  } catch (error) {
-    console.error("API: Error fetching dashboard data:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("API: Failed to fetch dashboard data:", err.message);
+    res.status(500).json({ error: "Failed to fetch dashboard data" });
   }
 };
 
-// Predictions by bucket
+// --- Predictions by bucket ---
 exports.getPredictionsByBucket = async (req, res) => {
   try {
-    const { bucket } = req.params;
-    const matches = await Match.find({
-      status: { $in: ['scheduled', 'upcoming', 'tba'] }
-    })
-      .populate({
-        path: 'prediction',
-        match: { bucket }
-      })
-      .populate('homeTeam awayTeam')
-      .sort({ 'prediction.confidence': -1, matchDateUtc: 1 })
+    const bucket = req.params.bucket;
+    const predictions = await Prediction.find({ bucket })
+      .populate('matchId')
+      .sort({ createdAt: -1 })
       .limit(20)
       .lean();
 
-    const filteredMatches = matches.filter(m => m.prediction);
-    res.json(filteredMatches);
-  } catch (error) {
-    console.error(`API: Error fetching predictions for bucket ${req.params.bucket}:`, error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.json(predictions);
+  } catch (err) {
+    console.error("API: Failed to fetch predictions:", err.message);
+    res.status(500).json({ error: "Failed to fetch predictions" });
   }
 };
 
-// ✅ Upcoming matches (for /api/upcoming)
-exports.getUpcomingMatches = async (req, res) => {
-  try {
-    const upcomingMatches = await Match.find({
-      status: { $in: ['scheduled', 'upcoming', 'tba'] },
-      prediction: { $exists: true }
-    })
-      .sort({ matchDateUtc: 1 })
-      .limit(20)
-      .populate('homeTeam awayTeam prediction')
-      .lean();
-
-    res.json(upcomingMatches);
-  } catch (error) {
-    console.error("API: Error fetching upcoming matches:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-};
-
-// ✅ Recent matches (small set, for /api/recent - homepage preview)
-exports.getRecentMatches = async (req, res) => {
-  try {
-    const matches = await Match.find({ status: 'finished' })
-      .sort({ matchDateUtc: -1 })
-      .limit(20)
-      .populate('homeTeam awayTeam prediction')
-      .lean();
-
-    res.json(matches);
-  } catch (error) {
-    console.error("API: Error fetching recent matches:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-};
-
-// ✅ Full results (bigger set, for /api/results - results page)
+// --- All Results (finished matches) ---
 exports.getResults = async (req, res) => {
   try {
-    const matches = await Match.find({ status: 'finished' })
+    const results = await Match.find({ status: "finished" })
+      .populate("homeTeam awayTeam prediction")
       .sort({ matchDateUtc: -1 })
-      .limit(100) // change to .limit(0) if you want ALL results
-      .populate('homeTeam awayTeam prediction')
+      .limit(30)
       .lean();
 
-    res.json(matches);
-  } catch (error) {
-    console.error("API: Error fetching all results:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    res.json(results);
+  } catch (err) {
+    console.error("API: Failed to fetch results:", err.message);
+    res.status(500).json({ error: "Failed to fetch results" });
   }
 };
 
-// Match summary
+// --- Recent Results (latest finished matches only) ---
+exports.getRecentResults = async (req, res) => {
+  try {
+    const results = await Match.find({ status: "finished" })
+      .populate("homeTeam awayTeam prediction")
+      .sort({ matchDateUtc: -1 })
+      .limit(10)
+      .lean();
+
+    res.json(results);
+  } catch (err) {
+    console.error("API: Failed to fetch recent results:", err.message);
+    res.status(500).json({ error: "Failed to fetch recent results" });
+  }
+};
+
+// --- Single match summary (by matchId) ---
 exports.getMatchSummary = async (req, res) => {
   try {
-    const { matchId } = req.params;
-    const match = await Match.findById(matchId)
-      .populate('prediction homeTeam awayTeam')
+    const match = await Match.findById(req.params.matchId)
+      .populate("homeTeam awayTeam prediction")
       .lean();
 
-    if (!match || !match.prediction) {
-      return res.status(404).json({ error: "Prediction not found for this match." });
-    }
-    if (!match.homeTeam || !match.awayTeam) {
-      return res.status(404).json({ error: 'Could not load team details for summary.' });
+    if (!match) {
+      return res.status(404).json({ error: "Match not found" });
     }
 
-    const summary = await getSummaryFromAI(match);
-    res.json({ summary });
-  } catch (error) {
-    console.error("API: Failed to fetch match summary", error);
-    res.status(500).json({ error: `Could not load AI summary. ${error.message}` });
+    res.json(match);
+  } catch (err) {
+    console.error("API: Failed to fetch match summary:", err.message);
+    res.status(500).json({ error: "Failed to fetch match summary" });
   }
 };
 
-// --- CRON JOB CONTROLLERS ---
-const checkCronToken = (req, res, next) => {
-  const token = req.query.token || req.headers['authorization'];
-  const cronToken = `Bearer ${process.env.CRON_TOKEN}`;
+// --- Upcoming Matches ---
+exports.getUpcomingMatches = async (req, res) => {
+  try {
+    const upcoming = await Match.find({ status: { $in: ["scheduled", "upcoming", "tba"] } })
+      .populate("homeTeam awayTeam")
+      .sort({ matchDateUtc: 1 })
+      .limit(20)
+      .lean();
 
-  if (!token || token !== cronToken) {
-    return res.status(403).json({ error: 'Unauthorized' });
+    res.json(upcoming);
+  } catch (err) {
+    console.error("API: Failed to fetch upcoming matches:", err.message);
+    res.status(500).json({ error: "Failed to fetch upcoming matches" });
   }
-  next();
 };
 
-exports.runFetchMatches = [
-  checkCronToken,
-  async (req, res) => {
-    console.log('CRON: Triggered job: fetch-matches');
-    res.status(202).json({ success: true, message: 'fetch-matches job started' });
-    fetchAndStoreMatches()
-      .then(result => {
-        console.log(`CRON: Job 'fetch-matches' complete. New: ${result.newMatchesCount}, History: ${result.newHistoryCount}`);
-      })
-      .catch(error => {
-        console.error("CRON: Job 'fetch-matches' failed:", error);
-      });
-  }
-];
+// --- Recent Matches (latest 10 regardless of status) ---
+exports.getRecentMatches = async (req, res) => {
+  try {
+    const recent = await Match.find({})
+      .populate("homeTeam awayTeam prediction")
+      .sort({ matchDateUtc: -1 })
+      .limit(10)
+      .lean();
 
-exports.runGeneratePredictions = [
-  checkCronToken,
-  async (req, res) => {
-    console.log('CRON: Triggered job: generate-predictions');
-    res.status(202).json({ success: true, message: 'generate-predictions job started' });
-    generateAllPredictions()
-      .then(result => {
-        console.log(`CRON: Job 'generate-predictions' complete. Processed: ${result.processedCount}`);
-      })
-      .catch(error => {
-        console.error("CRON: Job 'generate-predictions' failed:", error);
-      });
+    res.json(recent);
+  } catch (err) {
+    console.error("API: Failed to fetch recent matches:", err.message);
+    res.status(500).json({ error: "Failed to fetch recent matches" });
   }
-];
+};
 
-exports.runFetchResults = [
-  checkCronToken,
-  async (req, res) => {
-    console.log('CRON: Triggered job: fetch-results');
-    res.status(202).json({ success: true, message: 'fetch-results job started' });
-    fetchAndStoreResults()
-      .then(result => {
-        console.log(`CRON: Job 'fetch-results' complete. Updated: ${result.updatedCount}`);
-      })
-      .catch(error => {
-        console.error("CRON: Job 'fetch-results' failed:", error);
-      });
+// --- CRON Triggers ---
+exports.runFetchMatches = async (req, res) => {
+  try {
+    const result = await fetchAndStoreMatches();
+    res.json({ success: true, message: "fetch-matches job started", result });
+  } catch (err) {
+    console.error("CRON API: Failed fetch-matches:", err.message);
+    res.status(500).json({ error: "Failed to fetch matches" });
   }
-];
+};
+
+exports.runGeneratePredictions = async (req, res) => {
+  try {
+    const result = await generateAllPredictions();
+    res.json({ success: true, message: "generate-predictions job started", result });
+  } catch (err) {
+    console.error("CRON API: Failed generate-predictions:", err.message);
+    res.status(500).json({ error: "Failed to generate predictions" });
+  }
+};
+
+exports.runFetchResults = async (req, res) => {
+  try {
+    const result = await fetchAndStoreResults();
+    res.json({ success: true, message: "fetch-results job started", result });
+  } catch (err) {
+    console.error("CRON API: Failed fetch-results:", err.message);
+    res.status(500).json({ error: "Failed to fetch results" });
+  }
+};
