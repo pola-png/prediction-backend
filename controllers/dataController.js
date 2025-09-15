@@ -1,20 +1,29 @@
 const Match = require('../models/Match');
 const Prediction = require('../models/Prediction');
 const { fetchAndStoreMatches, generateAllPredictions, fetchAndStoreResults } = require('../services/cronService');
-const { getPredictionsFromAI, getSummaryFromAI } = require('../services/aiService');
+const { getPredictionsFromAI } = require('../services/aiService');
 
 // --- Dashboard data (predictions grouped by buckets) ---
 exports.getDashboardData = async (req, res) => {
   try {
-    const buckets = ["vip", "2odds", "5odds", "big10"];
+    const buckets = ["vip", "daily2", "value5", "big10"];
     const data = {};
 
     for (const bucket of buckets) {
-      data[bucket] = await Prediction.find({ bucket })
+      const predictions = await Prediction.find({ bucket })
         .populate('matchId')
         .sort({ createdAt: -1 })
-        .limit(5)
         .lean();
+
+      // Group predictions per match
+      const grouped = predictions.reduce((acc, p) => {
+        const matchId = p.matchId._id.toString();
+        if (!acc[matchId]) acc[matchId] = [];
+        acc[matchId].push(p);
+        return acc;
+      }, {});
+
+      data[bucket] = Object.values(grouped).map(group => group.slice(0, 5));
     }
 
     res.json({ success: true, data });
@@ -31,10 +40,17 @@ exports.getPredictionsByBucket = async (req, res) => {
     const predictions = await Prediction.find({ bucket })
       .populate('matchId')
       .sort({ createdAt: -1 })
-      .limit(20)
       .lean();
 
-    res.json(predictions);
+    // Group predictions per match
+    const grouped = predictions.reduce((acc, p) => {
+      const matchId = p.matchId._id.toString();
+      if (!acc[matchId]) acc[matchId] = [];
+      acc[matchId].push(p);
+      return acc;
+    }, {});
+
+    res.json(Object.values(grouped));
   } catch (err) {
     console.error("API: Failed to fetch predictions:", err.message);
     res.status(500).json({ error: "Failed to fetch predictions" });
@@ -82,17 +98,14 @@ exports.getMatchSummary = async (req, res) => {
 
     if (!match) return res.status(404).json({ error: "Match not found" });
 
-    // Include AI-generated summary
-    const summary = await getSummaryFromAI(match);
-
-    res.json({ ...match, summary });
+    res.json(match);
   } catch (err) {
     console.error("API: Failed to fetch match summary:", err.message);
     res.status(500).json({ error: "Failed to fetch match summary" });
   }
 };
 
-// --- Upcoming Matches (with multiple AI predictions per match) ---
+// --- Upcoming Matches with AI predictions (multiple per match) ---
 exports.getUpcomingMatches = async (req, res) => {
   try {
     const upcoming = await Match.find({ status: { $in: ["scheduled", "upcoming", "tba"] } })
@@ -101,41 +114,23 @@ exports.getUpcomingMatches = async (req, res) => {
       .limit(20)
       .lean();
 
-    const matchIds = upcoming.map(m => m._id);
-    const predictions = await Prediction.find({ matchId: { $in: matchIds } }).lean();
+    const historicalMatches = await Match.find({ status: "finished" })
+      .populate("homeTeam awayTeam")
+      .lean();
 
-    // Attach multiple AI predictions per match
     const upcomingWithPredictions = await Promise.all(
       upcoming.map(async (match) => {
-        const matchPredictions = predictions
-          .filter(p => p.matchId.toString() === match._id.toString())
-          .filter(p => p.confidence >= 90) // Ensure ≥90% confidence
-          .map(p => ({
-            bucket: p.bucket,
-            oneXTwo: p.oneXTwo,
-            doubleChance: p.doubleChance,
-            over05: p.over05,
-            over15: p.over15,
-            over25: p.over25,
-            bttsYes: p.bttsYes,
-            bttsNo: p.bttsNo,
-            confidence: p.confidence
-          }));
+        const predictions = await getPredictionsFromAI(match, historicalMatches);
 
-        // If no DB prediction exists, fetch from AI service dynamically
-        let aiPredictions = [];
-        if (matchPredictions.length === 0) {
-          try {
-            aiPredictions = await getPredictionsFromAI(match, []); // Historical data can be passed here
-          } catch (err) {
-            console.error("AI prediction failed:", err.message);
-          }
+        for (const p of predictions) {
+          await Prediction.findOneAndUpdate(
+            { matchId: match._id, bucket: p.bucket },
+            { ...p, matchId: match._id },
+            { upsert: true, new: true }
+          );
         }
 
-        return {
-          ...match,
-          predictions: [...matchPredictions, ...aiPredictions]
-        };
+        return { ...match, predictions };
       })
     );
 
