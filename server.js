@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(express.json());
 
-// --- Database Connection (non-blocking) ---
+// --- Database Connection ---
 const MONGO_URI = process.env.MONGO_URI;
 if (MONGO_URI) {
   mongoose.connect(MONGO_URI)
@@ -26,7 +26,16 @@ if (MONGO_URI) {
 }
 
 // --- API Routes ---
+// Keep /api prefix
 app.use('/api', apiRoutes);
+
+// --- Direct route aliases (optional) ---
+// These allow direct access without /api prefix
+app.get('/upcoming', (req, res) => res.redirect('/api/upcoming'));
+app.get('/recent', (req, res) => res.redirect('/api/recent'));
+app.get('/results', (req, res) => res.redirect('/api/results'));
+app.get('/recent-results', (req, res) => res.redirect('/api/recent-results'));
+app.get('/dashboard', (req, res) => res.redirect('/api/dashboard'));
 
 // --- Health Check Endpoint ---
 app.get('/healthz', (req, res) => {
@@ -42,4 +51,5 @@ app.get('/', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 SERVER: Running on port ${PORT}`);
   console.log(`✅ Health check endpoints available at "/" and "/healthz"`);
+  console.log('📡 API Routes available at "/api/*"');
 });
