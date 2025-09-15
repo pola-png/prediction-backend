@@ -88,7 +88,7 @@ exports.getUpcomingMatches = async (req, res) => {
   }
 };
 
-// ✅ Recent matches (for /api/recent)
+// ✅ Recent matches (small set, for /api/recent - homepage preview)
 exports.getRecentMatches = async (req, res) => {
   try {
     const matches = await Match.find({ status: 'finished' })
@@ -100,6 +100,22 @@ exports.getRecentMatches = async (req, res) => {
     res.json(matches);
   } catch (error) {
     console.error("API: Error fetching recent matches:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};
+
+// ✅ Full results (bigger set, for /api/results - results page)
+exports.getResults = async (req, res) => {
+  try {
+    const matches = await Match.find({ status: 'finished' })
+      .sort({ matchDateUtc: -1 })
+      .limit(100) // change to .limit(0) if you want ALL results
+      .populate('homeTeam awayTeam prediction')
+      .lean();
+
+    res.json(matches);
+  } catch (error) {
+    console.error("API: Error fetching all results:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 };
