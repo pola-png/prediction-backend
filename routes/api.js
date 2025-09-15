@@ -7,13 +7,14 @@ router.get('/dashboard', dataController.getDashboardData);
 router.get('/predictions/:bucket', dataController.getPredictionsByBucket);
 
 // --- Results endpoints ---
-router.get('/results', dataController.getResults);             // all finished matches
+router.get('/results', dataController.getResults);              // all finished matches
 router.get('/results/recent', dataController.getRecentResults); // recent finished matches
 router.get('/summary/:matchId', dataController.getMatchSummary);
 
 // --- Matches endpoints ---
 router.get('/matches/upcoming', dataController.getUpcomingMatches);   // only upcoming/scheduled
 router.get('/matches/recent', dataController.getRecentMatches);       // last 10 matches any status
+router.get('/matches/history', dataController.getMatchHistory);       // finished match history
 
 // --- Cron Job Triggers ---
 // NOTE: For external cron services, use 'Authorization: Bearer <token>' header
