@@ -5,12 +5,15 @@ const dataController = require('../controllers/dataController');
 // --- Frontend Data Routes ---
 router.get('/dashboard', dataController.getDashboardData);
 router.get('/predictions/:bucket', dataController.getPredictionsByBucket);
-router.get('/results', dataController.getResults);          // ✅ Full results page
+
+// ✅ Results endpoints
+router.get('/results', dataController.getResults);         // all finished matches
+router.get('/recent-results', dataController.getRecentResults); // recent finished matches
 router.get('/summary/:matchId', dataController.getMatchSummary);
 
-// ✅ New endpoints (for frontend direct usage)
-router.get('/upcoming', dataController.getUpcomingMatches);
-router.get('/recent', dataController.getRecentMatches);     // ✅ Homepage preview
+// ✅ Matches
+router.get('/upcoming', dataController.getUpcomingMatches);   // only upcoming/scheduled
+router.get('/recent', dataController.getRecentMatches);       // last 10 matches any status
 
 // --- Cron Job Triggers ---
 // NOTE: For external cron services, use 'Authorization: Bearer <token>' header
