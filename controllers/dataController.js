@@ -90,16 +90,42 @@ exports.getMatchSummary = async (req, res) => {
   }
 };
 
-// --- Upcoming Matches ---
+// --- Upcoming Matches with all predictions and odds ---
 exports.getUpcomingMatches = async (req, res) => {
   try {
+    // Fetch upcoming matches
     const upcoming = await Match.find({ status: { $in: ["scheduled", "upcoming", "tba"] } })
       .populate("homeTeam awayTeam")
       .sort({ matchDateUtc: 1 })
       .limit(20)
       .lean();
 
-    res.json(upcoming);
+    // Attach predictions/odds to each match
+    const matchIds = upcoming.map(m => m._id);
+    const predictions = await Prediction.find({ matchId: { $in: matchIds } }).lean();
+
+    const upcomingWithPredictions = upcoming.map(match => {
+      const matchPredictions = predictions
+        .filter(p => p.matchId.toString() === match._id.toString())
+        .map(p => ({
+          bucket: p.bucket,
+          oneXTwo: p.oneXTwo,
+          doubleChance: p.doubleChance,
+          over05: p.over05,
+          over15: p.over15,
+          over25: p.over25,
+          bttsYes: p.bttsYes,
+          bttsNo: p.bttsNo,
+          confidence: p.confidence
+        }));
+
+      return {
+        ...match,
+        predictions: matchPredictions
+      };
+    });
+
+    res.json(upcomingWithPredictions);
   } catch (err) {
     console.error("API: Failed to fetch upcoming matches:", err.message);
     res.status(500).json({ error: "Failed to fetch upcoming matches" });
