@@ -1,12 +1,12 @@
 const Match = require('../models/Match');
 const Prediction = require('../models/Prediction');
 const { fetchAndStoreMatches, generateAllPredictions, fetchAndStoreResults } = require('../services/cronService');
-const { getPredictionFromAI } = require('../services/aiService');
+const { getPredictionsFromAI, getSummaryFromAI } = require('../services/aiService');
 
 // --- Dashboard data (predictions grouped by buckets) ---
 exports.getDashboardData = async (req, res) => {
   try {
-    const buckets = ["vip", "daily2", "value5", "big10"];
+    const buckets = ["vip", "2odds", "5odds", "big10"];
     const data = {};
 
     for (const bucket of buckets) {
@@ -80,18 +80,19 @@ exports.getMatchSummary = async (req, res) => {
       .populate("homeTeam awayTeam prediction")
       .lean();
 
-    if (!match) {
-      return res.status(404).json({ error: "Match not found" });
-    }
+    if (!match) return res.status(404).json({ error: "Match not found" });
 
-    res.json(match);
+    // Include AI-generated summary
+    const summary = await getSummaryFromAI(match);
+
+    res.json({ ...match, summary });
   } catch (err) {
     console.error("API: Failed to fetch match summary:", err.message);
     res.status(500).json({ error: "Failed to fetch match summary" });
   }
 };
 
-// --- Upcoming Matches with AI predictions for all buckets ---
+// --- Upcoming Matches (with multiple AI predictions per match) ---
 exports.getUpcomingMatches = async (req, res) => {
   try {
     const upcoming = await Match.find({ status: { $in: ["scheduled", "upcoming", "tba"] } })
@@ -100,32 +101,41 @@ exports.getUpcomingMatches = async (req, res) => {
       .limit(20)
       .lean();
 
-    const historicalMatches = await Match.find({ status: "finished" })
-      .populate("homeTeam awayTeam")
-      .lean();
+    const matchIds = upcoming.map(m => m._id);
+    const predictions = await Prediction.find({ matchId: { $in: matchIds } }).lean();
 
+    // Attach multiple AI predictions per match
     const upcomingWithPredictions = await Promise.all(
-      upcoming.map(async match => {
-        const buckets = ["vip", "2odds", "5odds", "big10"];
-        const predictionsByBucket = {};
+      upcoming.map(async (match) => {
+        const matchPredictions = predictions
+          .filter(p => p.matchId.toString() === match._id.toString())
+          .filter(p => p.confidence >= 90) // Ensure ≥90% confidence
+          .map(p => ({
+            bucket: p.bucket,
+            oneXTwo: p.oneXTwo,
+            doubleChance: p.doubleChance,
+            over05: p.over05,
+            over15: p.over15,
+            over25: p.over25,
+            bttsYes: p.bttsYes,
+            bttsNo: p.bttsNo,
+            confidence: p.confidence
+          }));
 
-        await Promise.all(
-          buckets.map(async bucket => {
-            try {
-              const aiPrediction = await getPredictionFromAI(match, historicalMatches);
-              if (aiPrediction.bucket === bucket) {
-                predictionsByBucket[bucket] = aiPrediction;
-              } else {
-                predictionsByBucket[bucket] = null;
-              }
-            } catch (err) {
-              console.error(`AI: Failed for match ${match._id} bucket ${bucket}: ${err.message}`);
-              predictionsByBucket[bucket] = null;
-            }
-          })
-        );
+        // If no DB prediction exists, fetch from AI service dynamically
+        let aiPredictions = [];
+        if (matchPredictions.length === 0) {
+          try {
+            aiPredictions = await getPredictionsFromAI(match, []); // Historical data can be passed here
+          } catch (err) {
+            console.error("AI prediction failed:", err.message);
+          }
+        }
 
-        return { ...match, predictions: predictionsByBucket };
+        return {
+          ...match,
+          predictions: [...matchPredictions, ...aiPredictions]
+        };
       })
     );
 
