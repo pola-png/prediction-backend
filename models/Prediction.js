@@ -4,7 +4,7 @@ const { Schema } = mongoose;
 
 const PredictionSchema = new Schema({
   matchId: { type: Schema.Types.ObjectId, ref: 'Match', required: true },
-  version: String,
+  version: { type: String, default: null },
   features: {
     teamFormWeight: Number,
     h2hWeight: Number,
@@ -30,7 +30,7 @@ const PredictionSchema = new Schema({
     bttsNo: Number,
   },
   confidence: { type: Number, required: true },
-  bucket: { type: String, required: true, enum: ['vip', '2odds', '5odds', 'big10'] },
+  bucket: { type: String, required: true, enum: ['vip', 'daily2', 'value5', 'big10'] },
   status: { type: String, enum: ['pending', 'won', 'lost'], default: 'pending' },
 }, { timestamps: true });
 
