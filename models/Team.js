@@ -1,20 +1,14 @@
 // models/Team.js
 const mongoose = require('mongoose');
+const { Schema } = mongoose;
 
-const teamSchema = new mongoose.Schema(
+const TeamSchema = new Schema(
   {
-    name: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-    },
-    logoUrl: {
-      type: String,
-      default: null,
-    },
+    name: { type: String, required: true, index: true, unique: true },
+    logoUrl: { type: String }, // store logo if available
+    sourceIds: { type: Map, of: String }, // optional mapping of external ids
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model('Team', teamSchema);
+module.exports = mongoose.model('Team', TeamSchema);
