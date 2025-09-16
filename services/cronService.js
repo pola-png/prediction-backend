@@ -18,11 +18,6 @@ async function getOrCreateTeam(name, logoUrl = null) {
   return team;
 }
 
-function getCurrentSeason() {
-  const today = new Date();
-  return today.getMonth() >= 7 ? today.getFullYear() : today.getFullYear() - 1;
-}
-
 function tryParseDate(...candidates) {
   for (const c of candidates) {
     if (!c) continue;
@@ -32,14 +27,7 @@ function tryParseDate(...candidates) {
   return null;
 }
 
-function isWithinNext24Hours(date) {
-  if (!date) return false;
-  const now = new Date();
-  const limit = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  return date >= now && date <= limit;
-}
-
-// SoccersAPI
+// Example primary fetch (SoccersAPI) - simplified; keep fallback logic
 async function fetchFromSoccersAPI() {
   let newMatchesCount = 0;
   const { SOCCERSAPI_USER, SOCCERSAPI_TOKEN } = process.env;
@@ -50,9 +38,9 @@ async function fetchFromSoccersAPI() {
   const url = `https://api.soccersapi.com/v2.2/fixtures/?user=${SOCCERSAPI_USER}&token=${SOCCERSAPI_TOKEN}&t=schedule&d=${today}`;
 
   const response = await axios.get(url, { timeout: 15000 });
-  const matches = response.data?.data || [];
+  const liveMatches = response.data?.data || [];
 
-  for (const md of matches) {
+  for (const md of liveMatches) {
     try {
       const homeName = md.home_name || md.home?.name || md.home?.team_name;
       const awayName = md.away_name || md.away?.name || md.away?.team_name;
@@ -62,21 +50,17 @@ async function fetchFromSoccersAPI() {
       const exists = await Match.findOne({ externalId });
       if (exists) continue;
 
-      const matchDate = tryParseDate(
-        md.date && md.time ? `${md.date}T${md.time}` : null,
-        md.utcDate,
-        md.matchDateUtc
-      );
-      if (!isWithinNext24Hours(matchDate)) continue;
-
       const homeTeam = await getOrCreateTeam(homeName, md.home?.logo);
       const awayTeam = await getOrCreateTeam(awayName, md.away?.logo);
       if (!homeTeam || !awayTeam) continue;
 
+      const matchDate = tryParseDate(md.utcDate, md.matchDateUtc, `${md.date}T${md.time}`) || new Date();
+
       await Match.create({
         source: 'soccersapi',
         externalId,
-        leagueCode: md.league_name || md.league || null,
+        leagueCode: md.league_id || md.league || null,
+        leagueName: md.league_name || md.country || null,
         matchDateUtc: matchDate,
         status: 'scheduled',
         homeTeam: homeTeam._id,
@@ -92,27 +76,23 @@ async function fetchFromSoccersAPI() {
   return { newMatchesCount };
 }
 
-// OpenLigaDB
+// Fallback example (OpenLiga)
 async function fetchFromOpenLigaDB() {
   let newMatchesCount = 0;
   let updatedMatchesCount = 0;
   const leagueShortcuts = ['bl1', 'bl2'];
-  const season = getCurrentSeason();
 
   for (const league of leagueShortcuts) {
-    const url = `https://api.openligadb.de/getmatchdata/${league}/${season}`;
+    const url = `https://api.openligadb.de/getmatchdata/${league}`;
     const res = await axios.get(url, { timeout: 15000 });
-    const matches = res.data || [];
+    const liveMatches = res.data || [];
 
-    for (const md of matches) {
+    for (const md of liveMatches) {
       try {
         if (!md.matchID || !md.team1?.teamName || !md.team2?.teamName) continue;
-        const matchDate = tryParseDate(md.matchDateTimeUTC);
-        if (!isWithinNext24Hours(matchDate)) continue;
-
         const externalId = `openliga-${md.matchID}`;
         const existing = await Match.findOne({ externalId });
-        const lastUpdate = tryParseDate(md.lastUpdateDateTimeUTC) || new Date();
+        const lastUpdate = tryParseDate(md.lastUpdateDateTimeUTC, md.matchDateTimeUTC) || new Date();
 
         if (existing) {
           const existingUpdated = new Date(existing.updatedAt || 0);
@@ -125,7 +105,7 @@ async function fetchFromOpenLigaDB() {
                 status: md.matchIsFinished ? 'finished' : 'scheduled',
                 homeGoals,
                 awayGoals,
-                updatedAt: lastUpdate
+                updatedAt: lastUpdate,
               }
             });
             updatedMatchesCount++;
@@ -135,14 +115,17 @@ async function fetchFromOpenLigaDB() {
 
         const homeTeam = await getOrCreateTeam(md.team1.teamName, md.team1.teamIconUrl);
         const awayTeam = await getOrCreateTeam(md.team2.teamName, md.team2.teamIconUrl);
+        if (!homeTeam || !awayTeam) continue;
 
         const homeGoals = (md.matchResults || []).find(r => r.resultName === 'Endergebnis')?.pointsTeam1 ?? null;
         const awayGoals = (md.matchResults || []).find(r => r.resultName === 'Endergebnis')?.pointsTeam2 ?? null;
+        const matchDate = tryParseDate(md.matchDateTimeUTC) || new Date();
 
         await Match.create({
           source: 'openligadb',
           externalId,
-          leagueCode: md.leagueName || null,
+          leagueCode: league,
+          leagueName: md.leagueName || null,
           matchDateUtc: matchDate,
           status: md.matchIsFinished ? 'finished' : 'scheduled',
           homeTeam: homeTeam._id,
@@ -166,7 +149,6 @@ async function fetchFromOpenLigaDB() {
 async function fetchAndStoreMatches() {
   let newMatchesCount = 0;
   let updatedMatchesCount = 0;
-  let newHistoryCount = 0;
 
   try {
     const primary = await fetchFromSoccersAPI();
@@ -182,57 +164,63 @@ async function fetchAndStoreMatches() {
     }
   }
 
-  // keep history fetch as-is (not limited to 24h)
-  if (process.env.FOOTBALL_JSON_URL) {
+  return { newMatchesCount, updatedMatchesCount };
+}
+
+// Generate predictions (only next 24 hours)
+async function generateAllPredictions() {
+  let processedCount = 0;
+  const now = new Date();
+  const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  // Fetch upcoming matches within next 24 hours
+  const upcoming = await Match.find({
+    status: { $in: ['scheduled', 'upcoming', 'tba'] },
+    matchDateUtc: { $gte: now, $lte: cutoff },
+  }).populate('homeTeam awayTeam').limit(200).lean();
+
+  if (!upcoming.length) return { processedCount: 0 };
+
+  // historical for H2H
+  const historical = await Match.find({ status: 'finished' }).populate('homeTeam awayTeam').lean();
+
+  for (const match of upcoming) {
     try {
-      const res = await axios.get(process.env.FOOTBALL_JSON_URL, { timeout: 15000 });
-      const history = res.data?.matches || [];
-      for (const md of history) {
-        try {
-          if (!md.team1 || !md.team2 || !md.date) continue;
-          const externalId = `footballjson-${md.date}-${md.team1}-${md.team2}`;
-          const exists = await Match.findOne({ externalId });
-          if (exists) continue;
-
-          const homeTeam = await getOrCreateTeam(md.team1);
-          const awayTeam = await getOrCreateTeam(md.team2);
-
-          const homeGoals = md.score?.ft?.[0] ?? null;
-          const awayGoals = md.score?.ft?.[1] ?? null;
-          const matchDate = tryParseDate(md.date) || new Date(md.date);
-
-          await Match.create({
-            source: 'footballjson',
-            externalId,
-            leagueCode: md.league || 'history',
-            matchDateUtc: matchDate,
-            status: 'finished',
-            homeTeam: homeTeam._id,
-            awayTeam: awayTeam._id,
-            homeGoals,
-            awayGoals,
-          });
-          newHistoryCount++;
-        } catch (err) {
-          console.warn('CRON: skip history match err', err.message || err);
-        }
+      if (!match.homeTeam || !match.awayTeam) continue;
+      // request AI predictions (minConfidence 90 by default)
+      const aiPredictions = await getPredictionsFromAI(match, historical, 90);
+      for (const p of aiPredictions) {
+        await Prediction.findOneAndUpdate(
+          { matchId: match._id, bucket: p.bucket },
+          {
+            matchId: match._id,
+            version: 'ai-2x',
+            outcomes: {
+              oneXTwo: p.oneXTwo,
+              doubleChance: p.doubleChance,
+              over05: p.over05,
+              over15: p.over15,
+              over25: p.over25,
+              bttsYes: p.bttsYes,
+              bttsNo: p.bttsNo,
+            },
+            confidence: p.confidence,
+            bucket: p.bucket,
+            status: 'pending',
+          },
+          { upsert: true, new: true }
+        );
+        processedCount++;
       }
     } catch (err) {
-      console.warn('CRON: fetching football.json failed:', err.message || err);
+      console.error(`CRON: prediction fail for match ${match._id}:`, err.message || err);
     }
   }
 
-  return { newMatchesCount, updatedMatchesCount, newHistoryCount };
+  return { processedCount };
 }
-
-// Predictions + results unchanged
-async function evaluatePredictionsForMatch(match) { /* ...same as yours... */ }
-async function generateAllPredictions() { /* ...same as yours... */ }
-async function fetchAndStoreResults() { /* ...same as yours... */ }
 
 module.exports = {
   fetchAndStoreMatches,
   generateAllPredictions,
-  fetchAndStoreResults,
-  evaluatePredictionsForMatch
 };
