@@ -7,9 +7,24 @@ if (!process.env.GEMINI_API_KEY) {
 }
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 
+// Utility: convert probability (0–1) to decimal odds
+const probToOdds = (p) => {
+  if (typeof p !== 'number' || p <= 0) return null;
+  return +(1 / p).toFixed(2); // keep 2 decimals
+};
+
+// Schema definition
 const GenerateMatchPredictionsOutputSchema = z.object({
-  oneXTwo: z.object({ home: z.number(), draw: z.number(), away: z.number() }),
-  doubleChance: z.object({ homeOrDraw: z.number(), homeOrAway: z.number(), drawOrAway: z.number() }),
+  oneXTwo: z.object({
+    home: z.number(),
+    draw: z.number(),
+    away: z.number()
+  }),
+  doubleChance: z.object({
+    homeOrDraw: z.number(),
+    homeOrAway: z.number(),
+    drawOrAway: z.number()
+  }),
   over05: z.number(),
   over15: z.number(),
   over25: z.number(),
@@ -46,8 +61,8 @@ async function callGenerativeAI(prompt, outputSchema) {
           const jsonString = text.replace(/```json/g, "").replace(/```/g, "").trim();
           const parsed = JSON.parse(jsonString);
 
-          if (Array.isArray(parsed)) return parsed.map(item => outputSchema.parse(item));
-          return [outputSchema.parse(parsed)];
+          if (Array.isArray(parsed)) return parsed.map(item => enrichPrediction(outputSchema.parse(item)));
+          return [enrichPrediction(outputSchema.parse(parsed))];
         } catch (err) {
           if (attempt === maxRetries) {
             console.warn(`AI [${modelName}] failed after ${maxRetries + 1} attempts: ${err.message}`);
@@ -63,6 +78,28 @@ async function callGenerativeAI(prompt, outputSchema) {
   throw new Error("AI: All models failed to generate predictions.");
 }
 
+// Add odds and accumulator to predictions
+function enrichPrediction(pred) {
+  const odds = {
+    homeWin: probToOdds(pred.oneXTwo.home),
+    draw: probToOdds(pred.oneXTwo.draw),
+    awayWin: probToOdds(pred.oneXTwo.away),
+    homeOrDraw: probToOdds(pred.doubleChance.homeOrDraw),
+    homeOrAway: probToOdds(pred.doubleChance.homeOrAway),
+    drawOrAway: probToOdds(pred.doubleChance.drawOrAway),
+    over05: probToOdds(pred.over05),
+    over15: probToOdds(pred.over15),
+    over25: probToOdds(pred.over25),
+    bttsYes: probToOdds(pred.bttsYes),
+    bttsNo: probToOdds(pred.bttsNo),
+  };
+
+  return {
+    ...pred,
+    odds,
+  };
+}
+
 async function getPredictionsFromAI(match, historicalMatches) {
   const h2hMatches = (historicalMatches || []).filter(h =>
     (h.homeTeam?.name === match.homeTeam?.name && h.awayTeam?.name === match.awayTeam?.name) ||
@@ -73,7 +110,7 @@ async function getPredictionsFromAI(match, historicalMatches) {
 You are an expert sports analyst. Generate multiple football match predictions in JSON array format.
 
 Match: ${match.homeTeam?.name} vs ${match.awayTeam?.name}
-League: ${match.leagueCode || 'N/A'}
+League: ${match.league || 'N/A'}
 Date: ${match.matchDateUtc}
 
 Head-to-Head:
