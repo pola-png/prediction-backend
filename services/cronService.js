@@ -115,7 +115,8 @@ async function fetchUpcomingFromGoalserve({ league, date_start, date_end } = {})
     const { GOALSERVE_TOKEN } = process.env;
     if (!GOALSERVE_TOKEN) return { newMatchesCount: 0 };
 
-    let url = `https://api.goalserve.com/api/v1/football/upcoming?token=${GOALSERVE_TOKEN}&json=1`;
+    // Updated working Goalserve URL
+    let url = `https://www.goalserve.com/getfeed/football/upcoming?token=${GOALSERVE_TOKEN}&json=1`;
     if (league) url += `&league=${encodeURIComponent(league)}`;
     if (date_start) url += `&date_start=${encodeURIComponent(date_start)}`;
     if (date_end) url += `&date_end=${encodeURIComponent(date_end)}`;
