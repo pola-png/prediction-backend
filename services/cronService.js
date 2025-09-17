@@ -1,17 +1,16 @@
-// services/cronService.js
 const axios = require('axios');
 const Match = require('../models/Match');
 const Team = require('../models/Team');
 const Prediction = require('../models/Prediction');
+const History = require('../models/History'); // new model
 const { getPredictionsFromAI } = require('./aiService');
 
-// default axios instance for cron calls (longer timeout)
-const http = axios.create({ timeout: 30000 });
+// default axios instance for cron calls (longer timeout + retry)
+const http = axios.create({ timeout: 60000, maxRedirects: 5 });
 
 /* ---------------- Helpers ---------------- */
 async function getOrCreateTeam(name, logoUrl = null) {
   if (!name) return null;
-  // try normalize name (trim)
   const cleanName = String(name).trim();
   if (!cleanName) return null;
 
@@ -19,7 +18,6 @@ async function getOrCreateTeam(name, logoUrl = null) {
   if (!team) {
     team = await Team.create({ name: cleanName, logo: logoUrl || null });
   } else if (logoUrl && !team.logoUrl) {
-    // only set logo if missing (do not overwrite existing)
     team.logoUrl = logoUrl;
     await team.save();
   }
@@ -42,8 +40,20 @@ function withinNext24Hours(date) {
   return date >= now && date <= until;
 }
 
-/* ---------------- Upcoming fetchers (only insert next 24h) ---------------- */
+/* ---------------- Retry wrapper ---------------- */
+async function safeGet(url, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await http.get(url);
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      console.warn(`Retrying (${i + 1}/${retries}) after error:`, err.message);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+}
 
+/* ---------------- Upcoming fetchers ---------------- */
 async function fetchUpcomingFromSoccersAPI() {
   const { SOCCERSAPI_USER, SOCCERSAPI_TOKEN } = process.env;
   if (!SOCCERSAPI_USER || !SOCCERSAPI_TOKEN) {
@@ -54,7 +64,7 @@ async function fetchUpcomingFromSoccersAPI() {
   try {
     const today = new Date().toISOString().split('T')[0];
     const url = `https://api.soccersapi.com/v2.2/fixtures/?user=${SOCCERSAPI_USER}&token=${SOCCERSAPI_TOKEN}&t=schedule&d=${today}`;
-    const res = await http.get(url);
+    const res = await safeGet(url);
     const items = res.data?.data || [];
 
     for (const md of items) {
@@ -79,7 +89,6 @@ async function fetchUpcomingFromSoccersAPI() {
 
         const existing = await Match.findOne({ externalId }).exec();
         if (existing) {
-          // update some fields if necessary
           existing.matchDateUtc = matchDate;
           existing.league = existing.league || leagueName;
           existing.homeTeam = existing.homeTeam || homeTeam._id;
@@ -104,7 +113,6 @@ async function fetchUpcomingFromSoccersAPI() {
       }
     }
   } catch (err) {
-    // bubble up to caller so fallback can run
     throw new Error(`SoccersAPI fetch error: ${err.message || err}`);
   }
 
@@ -113,13 +121,13 @@ async function fetchUpcomingFromSoccersAPI() {
 
 async function fetchUpcomingFromOpenLigaDB() {
   let newMatchesCount = 0;
-  const leagueShortcuts = ['bl1', 'bl2']; // adapt to your needs
+  const leagueShortcuts = ['bl1', 'bl2'];
   const season = new Date().getMonth() >= 7 ? new Date().getFullYear() : new Date().getFullYear() - 1;
 
   for (const league of leagueShortcuts) {
     try {
       const url = `https://api.openligadb.de/getmatchdata/${league}/${season}`;
-      const res = await http.get(url);
+      const res = await safeGet(url);
       const items = res.data || [];
 
       for (const md of items) {
@@ -179,7 +187,6 @@ async function fetchAndStoreUpcomingMatches() {
     totalNew += socRes.newMatchesCount || 0;
   } catch (err) {
     console.error('CRON: SoccersAPI failed:', err.message || err);
-    // fallback to OpenLigaDB
     try {
       const fb = await fetchUpcomingFromOpenLigaDB();
       totalNew += fb.newMatchesCount || 0;
@@ -190,10 +197,10 @@ async function fetchAndStoreUpcomingMatches() {
   return { newMatchesCount: totalNew };
 }
 
-/* ---------------- History import (explicit) ---------------- */
+/* ---------------- History import ---------------- */
 async function importHistoryFromUrl(url) {
   if (!url) throw new Error('No URL provided for history import');
-  const res = await http.get(url);
+  const res = await safeGet(url);
   const items = res.data?.matches || res.data || [];
   if (!Array.isArray(items)) throw new Error('History JSON did not contain an array');
 
@@ -210,7 +217,9 @@ async function importHistoryFromUrl(url) {
       const matchDate = tryParseDate(rawDate);
       if (!matchDate) continue;
 
-      const externalId = md.id ? `history-${md.id}` : `history-${matchDate.toISOString()}-${String(homeName).replace(/\s+/g,'_')}-${String(awayName).replace(/\s+/g,'_')}`;
+      const externalId = md.id
+        ? `history-${md.id}`
+        : `history-${matchDate.toISOString()}-${String(homeName).replace(/\s+/g, '_')}-${String(awayName).replace(/\s+/g, '_')}`;
 
       const homeLogo = md.homeLogo || md.team1?.logo || md.homeTeam?.logo || null;
       const awayLogo = md.awayLogo || md.team2?.logo || md.awayTeam?.logo || null;
@@ -219,10 +228,9 @@ async function importHistoryFromUrl(url) {
       const awayTeam = await getOrCreateTeam(awayName, awayLogo);
       if (!homeTeam || !awayTeam) continue;
 
-      // Try find by externalId or by exact home/away/date
-      let existing = await Match.findOne({ externalId }).exec();
+      let existing = await History.findOne({ externalId }).exec();
       if (!existing) {
-        existing = await Match.findOne({
+        existing = await History.findOne({
           homeTeam: homeTeam._id,
           awayTeam: awayTeam._id,
           matchDateUtc: matchDate
@@ -247,7 +255,7 @@ async function importHistoryFromUrl(url) {
         await existing.save();
         updated++;
       } else {
-        await Match.create({
+        await History.create({
           source: 'history-import',
           externalId,
           league: leagueName,
@@ -268,7 +276,7 @@ async function importHistoryFromUrl(url) {
   return { created, updated, total: created + updated };
 }
 
-/* ---------------- Generate predictions for next 24h ---------------- */
+/* ---------------- Generate predictions ---------------- */
 async function generateAllPredictions() {
   let processedCount = 0;
   const now = new Date();
@@ -281,7 +289,9 @@ async function generateAllPredictions() {
 
   if (!upcoming.length) return { processedCount: 0 };
 
-  const historical = await Match.find({ status: 'finished' }).populate('homeTeam awayTeam').lean();
+  const historical = await History.find({ status: 'finished' })
+    .populate('homeTeam awayTeam')
+    .lean();
 
   for (const match of upcoming) {
     try {
@@ -321,7 +331,7 @@ async function generateAllPredictions() {
 /* ---------------- Exported functions ---------------- */
 module.exports = {
   fetchAndStoreUpcomingMatches,
-  fetchUpcomingFromSoccersAPI, // exposed for debug if needed
+  fetchUpcomingFromSoccersAPI,
   importHistoryFromUrl,
   generateAllPredictions
 };
