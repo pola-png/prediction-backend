@@ -108,11 +108,15 @@ async function fetchUpcomingFromSportmonks() {
 }
 
 /* ---------------- Goalserve Fetcher ---------------- */
-async function fetchUpcomingFromGoalserve() {
+async function fetchUpcomingFromGoalserve({ league, date_start, date_end } = {}) {
     const { GOALSERVE_TOKEN } = process.env;
     if (!GOALSERVE_TOKEN) return { newMatchesCount: 0 };
 
-    const url = `https://api.goalserve.com/api/v1/football/upcoming?token=${GOALSERVE_TOKEN}`;
+    let url = `https://api.goalserve.com/api/v1/football/upcoming?token=${GOALSERVE_TOKEN}&json=1`;
+    if (league) url += `&league=${encodeURIComponent(league)}`;
+    if (date_start) url += `&date_start=${encodeURIComponent(date_start)}`;
+    if (date_end) url += `&date_end=${encodeURIComponent(date_end)}`;
+
     console.log('Fetching Goalserve:', url);
 
     const res = await safeGet(url);
@@ -162,7 +166,7 @@ async function fetchUpcomingFromGoalserve() {
 }
 
 /* ---------------- Fetch & store upcoming matches ---------------- */
-async function fetchAndStoreUpcomingMatches() {
+async function fetchAndStoreUpcomingMatches(filters = {}) {
     let totalNew = 0;
     try {
         const sm = await fetchUpcomingFromSportmonks();
@@ -172,7 +176,7 @@ async function fetchAndStoreUpcomingMatches() {
     }
 
     try {
-        const gs = await fetchUpcomingFromGoalserve();
+        const gs = await fetchUpcomingFromGoalserve(filters);
         totalNew += gs.newMatchesCount || 0;
     } catch (err) {
         console.error('Goalserve fetch failed:', err.message);
