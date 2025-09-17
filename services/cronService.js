@@ -2,10 +2,10 @@ const axios = require('axios');
 const Match = require('../models/Match');
 const Team = require('../models/Team');
 const Prediction = require('../models/Prediction');
-const History = require('../models/History'); // new model
+const History = require('../models/History'); 
 const { getPredictionsFromAI } = require('./aiService');
 
-// Axios instance with timeout and retry
+// Axios instance
 const http = axios.create({ timeout: 60000, maxRedirects: 5 });
 
 /* ---------------- Helper Functions ---------------- */
@@ -52,70 +52,110 @@ async function safeGet(url, retries = 3) {
     }
 }
 
-/* ---------------- SoccersAPI Fetch ---------------- */
-async function fetchUpcomingFromSoccersAPI() {
-    const { SOCCERSAPI_USER, SOCCERSAPI_TOKEN } = process.env;
-    if (!SOCCERSAPI_USER || !SOCCERSAPI_TOKEN) {
-        console.warn('SoccersAPI credentials missing');
-        return { newMatchesCount: 0 };
-    }
+/* ---------------- Sportmonks Fetcher ---------------- */
+async function fetchUpcomingFromSportmonks() {
+    const { SPORTMONKS_TOKEN } = process.env;
+    if (!SPORTMONKS_TOKEN) return { newMatchesCount: 0 };
+
+    const today = new Date().toISOString().split('T')[0];
+    const url = `https://api.sportmonks.com/v3/football/fixtures/date/${today}?api_token=${SPORTMONKS_TOKEN}&include=localTeam,visitorTeam,league`;
+    console.log('Fetching Sportmonks:', url);
+
+    const res = await safeGet(url);
+    const items = res.data?.data || [];
+    console.log(`Sportmonks returned ${items.length} matches`);
 
     let newMatchesCount = 0;
-    try {
-        const todayUTC = new Date().toISOString().split('T')[0];
-        const url = `https://api.soccersapi.com/v2.2/fixtures/?user=${SOCCERSAPI_USER}&token=${SOCCERSAPI_TOKEN}&t=schedule&d=${todayUTC}&utc=0`;
-        console.log('Fetching SoccersAPI:', url);
-        const res = await safeGet(url);
-        const items = res.data?.data || [];
-        console.log(`SoccersAPI returned ${items.length} matches`);
+    for (const md of items) {
+        try {
+            const homeTeam = await getOrCreateTeam(md.localTeam?.data?.name, md.localTeam?.data?.logo_path);
+            const awayTeam = await getOrCreateTeam(md.visitorTeam?.data?.name, md.visitorTeam?.data?.logo_path);
+            if (!homeTeam || !awayTeam) continue;
 
-        for (const md of items) {
-            try {
-                const homeName = md.home_name || md.home?.name;
-                const awayName = md.away_name || md.away?.name;
-                if (!md.id || !homeName || !awayName) continue;
+            const matchDate = tryParseDate(md.time?.starting_at?.date_time_utc);
+            if (!matchDate || !withinNext24Hours(matchDate)) continue;
 
-                const matchDate = tryParseDate(
-                    md.date && md.time ? `${md.date}T${md.time}Z` : null,
-                    md.utcDate,
-                    md.matchDateUtc
-                );
-                if (!matchDate || !withinNext24Hours(matchDate)) continue;
+            const externalId = `sportmonks-${md.id}`;
+            const leagueName = md.league?.data?.name || null;
 
-                const externalId = `soccersapi-${md.id}`;
-                const leagueName = md.league_name || md.league || md.leagueCode || null;
-
-                const homeTeam = await getOrCreateTeam(homeName, md.home?.logo || md.home_logo || null);
-                const awayTeam = await getOrCreateTeam(awayName, md.away?.logo || md.away_logo || null);
-                if (!homeTeam || !awayTeam) continue;
-
-                const existing = await Match.findOne({ externalId }).exec();
-                if (existing) {
-                    existing.matchDateUtc = matchDate;
-                    existing.league = existing.league || leagueName;
-                    existing.homeTeam = existing.homeTeam || homeTeam._id;
-                    existing.awayTeam = existing.awayTeam || awayTeam._id;
-                    existing.source = 'soccersapi';
-                    existing.status = existing.status || 'scheduled';
-                    await existing.save();
-                } else {
-                    await Match.create({
-                        source: 'soccersapi',
-                        externalId,
-                        league: leagueName,
-                        matchDateUtc: matchDate,
-                        status: 'scheduled',
-                        homeTeam: homeTeam._id,
-                        awayTeam: awayTeam._id
-                    });
-                    newMatchesCount++;
-                }
-            } catch (err) {
-                console.warn('CRON:soccersapi item skip:', err.message);
+            const existing = await Match.findOne({ externalId }).exec();
+            if (existing) {
+                existing.matchDateUtc = matchDate;
+                existing.league = existing.league || leagueName;
+                existing.homeTeam = existing.homeTeam || homeTeam._id;
+                existing.awayTeam = existing.awayTeam || awayTeam._id;
+                existing.source = 'sportmonks';
+                existing.status = existing.status || 'scheduled';
+                await existing.save();
+            } else {
+                await Match.create({
+                    source: 'sportmonks',
+                    externalId,
+                    league: leagueName,
+                    matchDateUtc: matchDate,
+                    status: 'scheduled',
+                    homeTeam: homeTeam._id,
+                    awayTeam: awayTeam._id
+                });
+                newMatchesCount++;
             }
+        } catch (err) {
+            console.warn('CRON: Sportmonks item skip:', err.message);
         }
-    } catch (err) {
-        console.error('SoccersAPI fetch failed:', err.message);
+    }
+
+    return { newMatchesCount };
+}
+
+/* ---------------- Goalserve Fetcher ---------------- */
+async function fetchUpcomingFromGoalserve() {
+    const { GOALSERVE_TOKEN } = process.env;
+    if (!GOALSERVE_TOKEN) return { newMatchesCount: 0 };
+
+    const url = `https://api.goalserve.com/api/v1/football/upcoming?token=${GOALSERVE_TOKEN}`;
+    console.log('Fetching Goalserve:', url);
+
+    const res = await safeGet(url);
+    const items = res.data?.matches || [];
+    console.log(`Goalserve returned ${items.length} matches`);
+
+    let newMatchesCount = 0;
+    for (const md of items) {
+        try {
+            const homeTeam = await getOrCreateTeam(md.home?.name, md.home?.logo);
+            const awayTeam = await getOrCreateTeam(md.away?.name, md.away?.logo);
+            if (!homeTeam || !awayTeam) continue;
+
+            const matchDate = tryParseDate(md.date_utc);
+            if (!matchDate || !withinNext24Hours(matchDate)) continue;
+
+            const externalId = `goalserve-${md.id}`;
+            const leagueName = md.league?.name || null;
+
+            const existing = await Match.findOne({ externalId }).exec();
+            if (existing) {
+                existing.matchDateUtc = matchDate;
+                existing.league = existing.league || leagueName;
+                existing.homeTeam = existing.homeTeam || homeTeam._id;
+                existing.awayTeam = existing.awayTeam || awayTeam._id;
+                existing.source = 'goalserve';
+                existing.status = existing.status || 'scheduled';
+                await existing.save();
+            } else {
+                await Match.create({
+                    source: 'goalserve',
+                    externalId,
+                    league: leagueName,
+                    matchDateUtc: matchDate,
+                    status: 'scheduled',
+                    homeTeam: homeTeam._id,
+                    awayTeam: awayTeam._id
+                });
+                newMatchesCount++;
+            }
+        } catch (err) {
+            console.warn('CRON: Goalserve item skip:', err.message);
+        }
     }
 
     return { newMatchesCount };
@@ -125,11 +165,19 @@ async function fetchUpcomingFromSoccersAPI() {
 async function fetchAndStoreUpcomingMatches() {
     let totalNew = 0;
     try {
-        const socRes = await fetchUpcomingFromSoccersAPI();
-        totalNew += socRes.newMatchesCount || 0;
+        const sm = await fetchUpcomingFromSportmonks();
+        totalNew += sm.newMatchesCount || 0;
     } catch (err) {
-        console.error('CRON: SoccersAPI failed:', err.message);
+        console.error('Sportmonks fetch failed:', err.message);
     }
+
+    try {
+        const gs = await fetchUpcomingFromGoalserve();
+        totalNew += gs.newMatchesCount || 0;
+    } catch (err) {
+        console.error('Goalserve fetch failed:', err.message);
+    }
+
     console.log(`Total new matches fetched: ${totalNew}`);
     return { newMatchesCount: totalNew };
 }
@@ -189,6 +237,7 @@ async function generateAllPredictions() {
 /* ---------------- Export ---------------- */
 module.exports = {
     fetchAndStoreUpcomingMatches,
-    fetchUpcomingFromSoccersAPI,
+    fetchUpcomingFromSportmonks,
+    fetchUpcomingFromGoalserve,
     generateAllPredictions
 };
