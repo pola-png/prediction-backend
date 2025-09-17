@@ -1,4 +1,3 @@
-// controllers/dataController.js
 const Match = require('../models/Match');
 const Prediction = require('../models/Prediction');
 const Team = require('../models/Team');
@@ -34,7 +33,6 @@ function applyPredictionStatus(match, predictions) {
 
 function groupPredictionsByMatch(predictions) {
   return predictions.reduce((acc, p) => {
-    // p.matchId may be an object (populated) or an ObjectId
     const matchIdKey = (p.matchId && (p.matchId._id || p.matchId)) ? String(p.matchId._id || p.matchId) : 'unknown';
     if (!acc[matchIdKey]) acc[matchIdKey] = [];
     acc[matchIdKey].push(p);
@@ -55,7 +53,6 @@ function safeTeamObj(team) {
 }
 
 function formatMatch(match, predictions = []) {
-  // match expected to be populated (homeTeam/awayTeam) or a plain object from DB.
   const home = match.homeTeam ? safeTeamObj(match.homeTeam) : null;
   const away = match.awayTeam ? safeTeamObj(match.awayTeam) : null;
   const matchDate = match.matchDateUtc || match.date || match.matchDate || null;
@@ -94,10 +91,8 @@ exports.getDashboardData = async (req, res) => {
         .sort({ createdAt: -1 })
         .lean();
 
-      // group per match
       const grouped = groupPredictionsByMatch(predictions);
       data[bucket] = Object.values(grouped).map(g => {
-        // g is array of prediction docs for a single match; g[0].matchId should be match doc when populated
         const matchObj = g[0].matchId || {};
         return formatMatch(matchObj, g);
       }).slice(0, 5);
@@ -110,7 +105,7 @@ exports.getDashboardData = async (req, res) => {
   }
 };
 
-/* ---------------- Predictions (by bucket) ---------------- */
+/* ---------------- Predictions ---------------- */
 exports.getPredictionsByBucket = async (req, res) => {
   try {
     const bucket = req.params.bucket;
@@ -184,7 +179,6 @@ exports.getMatchSummary = async (req, res) => {
 /* ---------------- Matches ---------------- */
 exports.getUpcomingMatches = async (req, res) => {
   try {
-    // Return only matches in the next 24 hours
     const now = new Date();
     const until = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     const upcoming = await Match.find({
@@ -192,7 +186,6 @@ exports.getUpcomingMatches = async (req, res) => {
       matchDateUtc: { $gte: now, $lte: until }
     }).populate("homeTeam awayTeam").sort({ matchDateUtc: 1 }).limit(50).lean();
 
-    // fetch predictions for these matches (if any)
     const matchIds = upcoming.map(m => m._id);
     const predictions = await Prediction.find({ matchId: { $in: matchIds } }).lean();
 
@@ -246,10 +239,10 @@ exports.getMatchHistory = async (req, res) => {
 };
 
 /* ---------------- Cron triggers + import ---------------- */
-
 exports.runFetchMatches = async (req, res) => {
   try {
-    const result = await fetchAndStoreUpcomingMatches();
+    const { league, date_start, date_end } = req.query; // optional filters for Goalserve
+    const result = await fetchAndStoreUpcomingMatches({ league, date_start, date_end });
     res.json({ success: true, result });
   } catch (err) {
     console.error("CRON API: Failed fetch-matches:", err.message || err);
@@ -272,7 +265,9 @@ exports.importHistory = async (req, res) => {
   try {
     const url = req.body?.url || process.env.FOOTBALL_JSON_URL;
     if (!url) return res.status(400).json({ error: 'No history URL provided' });
-    const result = await importHistoryFromUrl(url);
+    // Append ?json=1 if missing
+    const finalUrl = url.includes('?json=1') ? url : `${url}${url.includes('?') ? '&' : '?'}json=1`;
+    const result = await importHistoryFromUrl(finalUrl);
     res.json({ success: true, result });
   } catch (err) {
     console.error("API: importHistory failed:", err.message || err);
