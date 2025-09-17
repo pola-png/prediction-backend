@@ -1,7 +1,12 @@
 const Match = require('../models/Match');
 const Prediction = require('../models/Prediction');
 const Team = require('../models/Team');
-const { fetchAndStoreUpcomingMatches, importHistoryFromUrl, generateAllPredictions } = require('../services/cronService');
+const Player = require('../models/Player'); // Assuming you have a Player model
+const {
+  fetchAndStoreUpcomingMatches,
+  importHistoryFromUrl,
+  generateAllPredictions
+} = require('../services/cronService');
 
 /* ---------------- Helpers ---------------- */
 
@@ -13,19 +18,39 @@ function getOneXTwo(pred) {
   return null;
 }
 
+function calculateWinner(match) {
+  if (!match || match.status !== 'finished') return null;
+  // Use FT first, then ET, then Pen if tie
+  const homeScore = match.ft_score ?? match.homeGoals ?? 0;
+  const awayScore = match.ft_score_away ?? match.awayGoals ?? 0;
+
+  if (homeScore > awayScore) return 'home';
+  if (homeScore < awayScore) return 'away';
+
+  const etHome = match.et_score ?? 0;
+  const etAway = match.et_score_away ?? 0;
+  if (etHome > etAway) return 'home';
+  if (etHome < etAway) return 'away';
+
+  const penHome = match.pen_score ?? 0;
+  const penAway = match.pen_score_away ?? 0;
+  if (penHome > penAway) return 'home';
+  if (penHome < penAway) return 'away';
+
+  return 'draw';
+}
+
 function applyPredictionStatus(match, predictions) {
-  if (!match || match.status !== 'finished') return predictions;
-  const actualWinner =
-    match.homeGoals > match.awayGoals ? "home" :
-    match.homeGoals < match.awayGoals ? "away" : "draw";
+  const actualWinner = calculateWinner(match);
+  if (!actualWinner) return predictions;
 
   return predictions.map(p => {
     const oneXTwo = getOneXTwo(p);
     if (oneXTwo && !p.status) {
       const predictedWinner =
-        oneXTwo.home > oneXTwo.away ? "home" :
-        oneXTwo.home < oneXTwo.away ? "away" : "draw";
-      p.status = predictedWinner === actualWinner ? "won" : "lost";
+        oneXTwo.home > oneXTwo.away ? 'home' :
+        oneXTwo.home < oneXTwo.away ? 'away' : 'draw';
+      p.status = predictedWinner === actualWinner ? 'won' : 'lost';
     }
     return p;
   });
@@ -59,13 +84,22 @@ function formatMatch(match, predictions = []) {
 
   return {
     id: String(match._id || match.id),
+    static_id: match.static_id || null,
     league: match.league || match.leagueCode || null,
+    season: match.season || null,
     date: matchDate ? new Date(matchDate).toISOString() : null,
     matchDateUtc: matchDate ? new Date(matchDate).toISOString() : null,
     status: match.status || 'scheduled',
+    venue: match.venue || null,
+    venue_id: match.venue_id || null,
+    groupId: match.groupId || null,
     homeTeam: home,
     awayTeam: away,
-    score: match.status === 'finished' ? (match.score || (match.homeGoals != null && match.awayGoals != null ? { home: match.homeGoals, away: match.awayGoals } : null)) : null,
+    score: match.status === 'finished' ? {
+      ft: { home: match.ft_score ?? match.homeGoals, away: match.ft_score_away ?? match.awayGoals },
+      et: { home: match.et_score ?? null, away: match.et_score_away ?? null },
+      pen: { home: match.pen_score ?? null, away: match.pen_score_away ?? null }
+    } : null,
     predictions: (predictions || []).map(p => ({
       id: String(p._id || p.id),
       bucket: p.bucket,
@@ -84,10 +118,7 @@ exports.getDashboardData = async (req, res) => {
 
     for (const bucket of buckets) {
       const predictions = await Prediction.find({ bucket })
-        .populate({
-          path: "matchId",
-          populate: ["homeTeam", "awayTeam"]
-        })
+        .populate({ path: "matchId", populate: ["homeTeam", "awayTeam"] })
         .sort({ createdAt: -1 })
         .lean();
 
@@ -110,10 +141,7 @@ exports.getPredictionsByBucket = async (req, res) => {
   try {
     const bucket = req.params.bucket;
     const predictions = await Prediction.find({ bucket })
-      .populate({
-        path: "matchId",
-        populate: ["homeTeam", "awayTeam"]
-      })
+      .populate({ path: "matchId", populate: ["homeTeam", "awayTeam"] })
       .sort({ createdAt: -1 })
       .lean();
 
@@ -164,7 +192,9 @@ exports.getRecentResults = async (req, res) => {
 
 exports.getMatchSummary = async (req, res) => {
   try {
-    const match = await Match.findById(req.params.matchId).populate("homeTeam awayTeam").lean();
+    const match = await Match.findById(req.params.matchId)
+      .populate("homeTeam awayTeam")
+      .lean();
     if (!match) return res.status(404).json({ error: "Match not found" });
 
     const predictions = await Prediction.find({ matchId: match._id }).lean();
@@ -184,7 +214,11 @@ exports.getUpcomingMatches = async (req, res) => {
     const upcoming = await Match.find({
       status: { $in: ["scheduled", "upcoming", "tba"] },
       matchDateUtc: { $gte: now, $lte: until }
-    }).populate("homeTeam awayTeam").sort({ matchDateUtc: 1 }).limit(50).lean();
+    })
+      .populate("homeTeam awayTeam")
+      .sort({ matchDateUtc: 1 })
+      .limit(50)
+      .lean();
 
     const matchIds = upcoming.map(m => m._id);
     const predictions = await Prediction.find({ matchId: { $in: matchIds } }).lean();
@@ -219,9 +253,10 @@ exports.getRecentMatches = async (req, res) => {
 /* ---------------- History ---------------- */
 exports.getMatchHistory = async (req, res) => {
   try {
-    const { limit = 50, league } = req.query;
+    const { limit = 50, league, season } = req.query;
     const filter = { status: "finished" };
     if (league) filter.league = league;
+    if (season) filter.season = season;
 
     const matches = await Match.find(filter)
       .populate("homeTeam awayTeam")
@@ -238,39 +273,36 @@ exports.getMatchHistory = async (req, res) => {
   }
 };
 
-/* ---------------- Cron triggers + import ---------------- */
-exports.runFetchMatches = async (req, res) => {
+/* ---------------- Lineups & Player Stats ---------------- */
+exports.getMatchLineups = async (req, res) => {
   try {
-    const { league, date_start, date_end } = req.query; // optional filters for Goalserve
-    const result = await fetchAndStoreUpcomingMatches({ league, date_start, date_end });
-    res.json({ success: true, result });
+    const match = await Match.findById(req.params.matchId)
+      .populate({
+        path: "homeTeam awayTeam",
+        populate: { path: "players" }
+      }).lean();
+    if (!match) return res.status(404).json({ error: "Match not found" });
+
+    res.json({
+      home: match.homeTeam.players || [],
+      away: match.awayTeam.players || []
+    });
   } catch (err) {
-    console.error("CRON API: Failed fetch-matches:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch matches" });
+    console.error("API: Failed to fetch match lineups:", err.message || err);
+    res.status(500).json({ error: "Failed to fetch match lineups" });
   }
 };
 
-exports.runGeneratePredictions = async (req, res) => {
+exports.getTeamPlayers = async (req, res) => {
   try {
-    const result = await generateAllPredictions();
-    res.json({ success: true, result });
-  } catch (err) {
-    console.error("CRON API: Failed generate-predictions:", err.message || err);
-    res.status(500).json({ error: "Failed to generate predictions" });
-  }
-};
+    const team = await Team.findById(req.params.teamId)
+      .populate("players")
+      .lean();
+    if (!team) return res.status(404).json({ error: "Team not found" });
 
-/* Manual history import */
-exports.importHistory = async (req, res) => {
-  try {
-    const url = req.body?.url || process.env.FOOTBALL_JSON_URL;
-    if (!url) return res.status(400).json({ error: 'No history URL provided' });
-    // Append ?json=1 if missing
-    const finalUrl = url.includes('?json=1') ? url : `${url}${url.includes('?') ? '&' : '?'}json=1`;
-    const result = await importHistoryFromUrl(finalUrl);
-    res.json({ success: true, result });
+    res.json(team.players || []);
   } catch (err) {
-    console.error("API: importHistory failed:", err.message || err);
-    res.status(500).json({ error: "Failed to import history" });
+    console.error("API: Failed to fetch team players:", err.message || err);
+    res.status(500).json({ error: "Failed to fetch team players" });
   }
 };
