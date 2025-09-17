@@ -238,10 +238,91 @@ async function generateAllPredictions() {
     return { processedCount };
 }
 
+/* ---------------- Import historical matches ---------------- */
+async function importHistoryFromUrl(url) {
+    if (!url) throw new Error('No URL provided for history import');
+
+    console.log('Importing history from URL:', url);
+    const res = await safeGet(url);
+    const items = res.data?.matches || [];
+    console.log(`History URL returned ${items.length} matches`);
+
+    let importedCount = 0;
+
+    for (const md of items) {
+        try {
+            const homeTeam = await getOrCreateTeam(md.home?.name, md.home?.logo);
+            const awayTeam = await getOrCreateTeam(md.away?.name, md.away?.logo);
+            if (!homeTeam || !awayTeam) continue;
+
+            const matchDate = tryParseDate(md.date_utc, md.date);
+            if (!matchDate) continue;
+
+            const externalId = md.externalId || `history-${md.id}`;
+            const leagueName = md.league?.name || null;
+
+            const matchData = {
+                source: 'history',
+                externalId,
+                league: leagueName,
+                matchDateUtc: matchDate,
+                status: 'finished',
+                homeTeam: homeTeam._id,
+                awayTeam: awayTeam._id,
+                homeGoals: md.homeGoals ?? md.home_score ?? 0,
+                awayGoals: md.awayGoals ?? md.away_score ?? 0
+            };
+
+            const existing = await Match.findOne({ externalId }).exec();
+            let match;
+            if (existing) {
+                Object.assign(existing, matchData);
+                await existing.save();
+                match = existing;
+            } else {
+                match = await Match.create(matchData);
+            }
+
+            // Store in History
+            await History.findOneAndUpdate(
+                { matchId: match._id },
+                { matchId: match._id, status: 'finished' },
+                { upsert: true, new: true }
+            );
+
+            // Store predictions if provided
+            if (md.predictions && Array.isArray(md.predictions)) {
+                for (const p of md.predictions) {
+                    await Prediction.findOneAndUpdate(
+                        { matchId: match._id, bucket: p.bucket },
+                        {
+                            matchId: match._id,
+                            bucket: p.bucket,
+                            version: p.version || 'manual',
+                            outcomes: p.outcomes || {},
+                            confidence: p.confidence ?? 0,
+                            status: 'finished'
+                        },
+                        { upsert: true, new: true }
+                    );
+                }
+            }
+
+            importedCount++;
+        } catch (err) {
+            console.warn('History import skip:', err.message);
+        }
+    }
+
+    console.log(`Imported ${importedCount} historical matches`);
+    return { importedCount };
+}
+
 /* ---------------- Export ---------------- */
 module.exports = {
     fetchAndStoreUpcomingMatches,
     fetchUpcomingFromSportmonks,
     fetchUpcomingFromGoalserve,
-    generateAllPredictions
+    generateAllPredictions,
+    importHistoryFromUrl
 };
