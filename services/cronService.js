@@ -3,8 +3,7 @@ const axios = require("axios");
 const Match = require("../models/Match");
 const Team = require("../models/Team");
 
-const GOALSERVE_TOKEN =
-  process.env.GOALSERVE_TOKEN || "fdc97ba4c57b4de23f4808ddf528229c";
+const GOALSERVE_TOKEN = process.env.GOALSERVE_TOKEN || "fdc97ba4c57b4de23f4808ddf528229c";
 const GOALSERVE_URL = `https://www.goalserve.com/getfeed/${GOALSERVE_TOKEN}/soccernew/home?json=true`;
 
 /* ---------------- Parse Goalserve ---------------- */
@@ -17,131 +16,38 @@ function parseGoalserveMatches(json) {
 
   let matches = [];
   for (const cat of categories) {
-    if (cat.matches) {
-      const catMatches = Array.isArray(cat.matches)
-        ? cat.matches
-        : [cat.matches];
+    if (!cat.matches) continue;
 
-      for (const m of catMatches) {
-        matches.push({
-          static_id: Number(m.id),
-          id: m._id ? Number(m._id) : null,
-          league: cat.name,
-          country: cat.ccountry || null,
-          season: m.season || null,
-          stage: m.stage?.name || null,
-          stage_id: m.stage?.id ? Number(m.stage.id) : null,
-          gid: m.stage?.gid ? Number(m.stage.gid) : null,
-          groupId: m.groupId ? Number(m.groupId) : null,
+    const catMatches = Array.isArray(cat.matches) ? cat.matches : [cat.matches];
 
-          // Match info
-          date: m.date,
-          time: m.time,
-          status: m.status || "Scheduled",
+    for (const m of catMatches) {
+      matches.push({
+        static_id: Number(m.id),
+        league: cat.name,
+        league_id: cat.id ? Number(cat.id) : null,
+        country: cat.country || null,
+        season: cat.season || null,
+        stage: cat.stage || null,
+        stage_id: cat.stage_id ? Number(cat.stage_id) : null,
 
-          // Venue
-          venue: m.venue || null,
-          venue_id: m.venue_id ? Number(m.venue_id) : null,
-          venue_city: m.venue_city || null,
+        date: m.date,
+        time: m.time,
+        status: m.status || "scheduled",
 
-          // Teams
-          homeTeam: {
-            id: m.hometeam?.id ? Number(m.hometeam.id) : null,
-            name: m.hometeam?.name || null,
-            score: m.hometeam?.score ? Number(m.hometeam.score) : null,
-            ft_score: m.hometeam?.ft_score || null,
-            et_score: m.hometeam?.et_score || null,
-            pen_score: m.hometeam?.pen_score || null,
-          },
-          awayTeam: {
-            id: m.awayteam?.id ? Number(m.awayteam.id) : null,
-            name: m.awayteam?.name || null,
-            score: m.awayteam?.score ? Number(m.awayteam.score) : null,
-            ft_score: m.awayteam?.ft_score || null,
-            et_score: m.awayteam?.et_score || null,
-            pen_score: m.awayteam?.pen_score || null,
-          },
+        homeId: m.hometeam?.id ? Number(m.hometeam.id) : null,
+        home: m.hometeam?.name || null,
+        homeShortName: m.hometeam?.short_name || null,
+        homeCode: m.hometeam?.code || null,
+        homeCountry: m.hometeam?.country || null,
+        homeLogo: m.hometeam?.logo || null,
 
-          halftime: m.halftime?.score || null,
-
-          // Goals
-          goals: m.goals?.goal
-            ? (Array.isArray(m.goals.goal) ? m.goals.goal : [m.goals.goal]).map(
-                g => ({
-                  team: g.team,
-                  minute: g.minute,
-                  player: g.player,
-                  playerid: g.playerid ? Number(g.playerid) : null,
-                  assist: g.assist || null,
-                  assistid: g.assistid ? Number(g.assistid) : null,
-                  score: g.score,
-                })
-              )
-            : [],
-
-          // Lineups
-          lineups: m.lineups?.player
-            ? (Array.isArray(m.lineups.player)
-                ? m.lineups.player
-                : [m.lineups.player]
-              ).map(p => ({
-                number: p.number ? Number(p.number) : null,
-                name: p.name,
-                booking: p.booking || null,
-                id: p.id ? Number(p.id) : null,
-                team: p.team || null,
-              }))
-            : [],
-
-          // Substitutions
-          substitutions: m.substitutions?.substitution
-            ? (Array.isArray(m.substitutions.substitution)
-                ? m.substitutions.substitution
-                : [m.substitutions.substitution]
-              ).map(s => ({
-                player_in_number: s.player_in_number
-                  ? Number(s.player_in_number)
-                  : null,
-                player_in_name: s.player_in_name,
-                player_in_booking: s.player_in_booking || null,
-                player_in_id: s.player_in_id ? Number(s.player_in_id) : null,
-                player_out_name: s.player_out_name || null,
-                player_out_id: s.player_out_id
-                  ? Number(s.player_out_id)
-                  : null,
-                minute: s.minute || null,
-                team: s.team || null,
-              }))
-            : [],
-
-          // Coaches
-          coaches: m.coaches?.coach
-            ? (Array.isArray(m.coaches.coach)
-                ? m.coaches.coach
-                : [m.coaches.coach]
-              ).map(c => ({
-                name: c.name,
-                id: c.id ? Number(c.id) : null,
-                team: c.team || null,
-              }))
-            : [],
-
-          // Referees
-          referees: m.referees?.referee
-            ? (Array.isArray(m.referees.referee)
-                ? m.referees.referee
-                : [m.referees.referee]
-              ).map(r => ({
-                name: r.name,
-                id: r.id ? Number(r.id) : null,
-              }))
-            : [],
-
-          // Odds / Stats placeholders
-          odds: m.odds || null,
-          stats: m.stats || null,
-        });
-      }
+        awayId: m.awayteam?.id ? Number(m.awayteam.id) : null,
+        away: m.awayteam?.name || null,
+        awayShortName: m.awayteam?.short_name || null,
+        awayCode: m.awayteam?.code || null,
+        awayCountry: m.awayteam?.country || null,
+        awayLogo: m.awayteam?.logo || null,
+      });
     }
   }
   return matches;
@@ -163,23 +69,51 @@ async function fetchAndStoreUpcomingMatches() {
     let newMatchesCount = 0;
 
     for (const m of matches) {
-      // Save teams
+      // ✅ Find or create teams (using team_id, aligned with Team.js)
       const homeTeam = await Team.findOneAndUpdate(
-        { id: m.homeTeam.id },
-        { name: m.homeTeam.name },
-        { upsert: true, new: true }
-      );
-      const awayTeam = await Team.findOneAndUpdate(
-        { id: m.awayTeam.id },
-        { name: m.awayTeam.name },
-        { upsert: true, new: true }
+        { team_id: m.homeId },
+        {
+          team_id: m.homeId,
+          name: m.home,
+          shortName: m.homeShortName,
+          code: m.homeCode,
+          country: m.homeCountry,
+          logoUrl: m.homeLogo,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
       );
 
-      // Upsert match
+      const awayTeam = await Team.findOneAndUpdate(
+        { team_id: m.awayId },
+        {
+          team_id: m.awayId,
+          name: m.away,
+          shortName: m.awayShortName,
+          code: m.awayCode,
+          country: m.awayCountry,
+          logoUrl: m.awayLogo,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      // ✅ Upsert match (aligned with Match.js schema)
       const existing = await Match.findOneAndUpdate(
         { static_id: m.static_id },
-        { ...m, homeTeam, awayTeam },
-        { upsert: true, new: true }
+        {
+          static_id: m.static_id,
+          league: m.league,
+          league_id: m.league_id,
+          season: m.season,
+          country: m.country,
+          stage: m.stage,
+          stage_id: m.stage_id,
+          date: m.date ? new Date(`${m.date} ${m.time} UTC`) : null,
+          time: m.time,
+          status: m.status,
+          homeTeam: homeTeam ? homeTeam._id : null,
+          awayTeam: awayTeam ? awayTeam._id : null,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
       );
 
       if (!existing) newMatchesCount++;
