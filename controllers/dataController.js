@@ -1,7 +1,7 @@
 const Match = require('../models/Match');
 const Prediction = require('../models/Prediction');
 const Team = require('../models/Team');
-const Player = require('../models/Player'); // Assuming you have a Player model
+const Player = require('../models/Player'); 
 const {
   fetchAndStoreUpcomingMatches,
   importHistoryFromUrl,
@@ -20,7 +20,7 @@ function getOneXTwo(pred) {
 
 function calculateWinner(match) {
   if (!match || match.status !== 'finished') return null;
-  // Use FT first, then ET, then Pen if tie
+
   const homeScore = match.ft_score ?? match.homeGoals ?? 0;
   const awayScore = match.ft_score_away ?? match.awayGoals ?? 0;
 
@@ -304,5 +304,19 @@ exports.getTeamPlayers = async (req, res) => {
   } catch (err) {
     console.error("API: Failed to fetch team players:", err.message || err);
     res.status(500).json({ error: "Failed to fetch team players" });
+  }
+};
+
+/* ---------------- Import History ---------------- */
+exports.importHistory = async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "Missing URL in request body" });
+
+    const result = await importHistoryFromUrl(url);
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error("API: Failed to import history:", err.message || err);
+    res.status(500).json({ error: "Failed to import match history" });
   }
 };
