@@ -320,3 +320,24 @@ exports.importHistory = async (req, res) => {
     res.status(500).json({ error: "Failed to import match history" });
   }
 };
+
+/* ---------------- Cron Jobs ---------------- */
+exports.runFetchMatches = async (req, res) => {
+  try {
+    const result = await fetchAndStoreUpcomingMatches();
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error("API: Failed to run fetch matches cron:", err.message || err);
+    res.status(500).json({ error: "Failed to fetch matches" });
+  }
+};
+
+exports.runGeneratePredictions = async (req, res) => {
+  try {
+    const result = await generateAllPredictions();
+    res.json({ success: true, result });
+  } catch (err) {
+    console.error("API: Failed to run generate predictions cron:", err.message || err);
+    res.status(500).json({ error: "Failed to generate predictions" });
+  }
+};
