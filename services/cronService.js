@@ -2,13 +2,14 @@ const axios = require('axios');
 const Match = require('../models/Match');
 const Team = require('../models/Team');
 const Prediction = require('../models/Prediction');
-const History = require('../models/History'); 
+const History = require('../models/History');
 const { getPredictionsFromAI } = require('./aiService');
 
 // Axios instance
 const http = axios.create({ timeout: 60000, maxRedirects: 5 });
 
 /* ---------------- Helper Functions ---------------- */
+
 async function getOrCreateTeam(name, logoUrl = null) {
     if (!name) return null;
     const cleanName = String(name).trim();
@@ -53,6 +54,7 @@ async function safeGet(url, retries = 3) {
 }
 
 /* ---------------- Sportmonks Fetcher ---------------- */
+
 async function fetchUpcomingFromSportmonks() {
     const { SPORTMONKS_TOKEN } = process.env;
     if (!SPORTMONKS_TOKEN) return { newMatchesCount: 0 };
@@ -108,6 +110,7 @@ async function fetchUpcomingFromSportmonks() {
 }
 
 /* ---------------- Goalserve Fetcher ---------------- */
+
 async function fetchUpcomingFromGoalserve({ league, date_start, date_end } = {}) {
     const { GOALSERVE_TOKEN } = process.env;
     if (!GOALSERVE_TOKEN) return { newMatchesCount: 0 };
@@ -166,6 +169,7 @@ async function fetchUpcomingFromGoalserve({ league, date_start, date_end } = {})
 }
 
 /* ---------------- Fetch & store upcoming matches ---------------- */
+
 async function fetchAndStoreUpcomingMatches(filters = {}) {
     let totalNew = 0;
     try {
@@ -187,6 +191,7 @@ async function fetchAndStoreUpcomingMatches(filters = {}) {
 }
 
 /* ---------------- Generate predictions ---------------- */
+
 async function generateAllPredictions() {
     let processedCount = 0;
     const now = new Date();
@@ -239,6 +244,7 @@ async function generateAllPredictions() {
 }
 
 /* ---------------- Import historical matches ---------------- */
+
 async function importHistoryFromUrl(url) {
     if (!url) throw new Error('No URL provided for history import');
 
@@ -283,14 +289,12 @@ async function importHistoryFromUrl(url) {
                 match = await Match.create(matchData);
             }
 
-            // Store in History
             await History.findOneAndUpdate(
                 { matchId: match._id },
                 { matchId: match._id, status: 'finished' },
                 { upsert: true, new: true }
             );
 
-            // Store predictions if provided
             if (md.predictions && Array.isArray(md.predictions)) {
                 for (const p of md.predictions) {
                     await Prediction.findOneAndUpdate(
