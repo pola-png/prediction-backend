@@ -4,18 +4,18 @@ const mongoose = require('mongoose');
 const matchSchema = new mongoose.Schema(
   {
     // Unique IDs
-    static_id: { type: Number, required: true, unique: true, index: true }, // permanent match ID across feeds
-    id: { type: Number }, // legacy ID (changes if match is rescheduled)
+    static_id: { type: String, required: true, unique: true, index: true }, // permanent match ID across feeds
+    id: { type: String }, // legacy ID (can change if match is rescheduled)
 
     // Tournament info
-    league_id: { type: Number },
+    league_id: { type: String },
     league: { type: String },
     season: { type: String },
     country: { type: String },
     stage: { type: String },
-    stage_id: { type: Number },
-    gid: { type: Number }, // stage mapping ID
-    groupId: { type: Number }, // for tournaments with groups
+    stage_id: { type: String },
+    gid: { type: String }, // stage mapping ID
+    groupId: { type: String }, // for tournaments with groups
 
     // Match info
     date: { type: Date },
@@ -24,12 +24,12 @@ const matchSchema = new mongoose.Schema(
 
     // Venue info
     venue: { type: String },
-    venue_id: { type: Number },
+    venue_id: { type: String },
     venue_city: { type: String },
 
     // Teams
     homeTeam: {
-      id: Number,
+      id: String,
       name: String,
       score: Number,
       ft_score: String,
@@ -37,7 +37,7 @@ const matchSchema = new mongoose.Schema(
       pen_score: String,
     },
     awayTeam: {
-      id: Number,
+      id: String,
       name: String,
       score: Number,
       ft_score: String,
@@ -54,9 +54,9 @@ const matchSchema = new mongoose.Schema(
         team: String, // localteam / visitorteam
         minute: String, // e.g. "45+2"
         player: String,
-        playerid: Number,
+        playerid: String,
         assist: String,
-        assistid: Number,
+        assistid: String,
         score: String, // score after goal
       },
     ],
@@ -67,7 +67,7 @@ const matchSchema = new mongoose.Schema(
         number: Number,
         name: String,
         booking: String, // YC 45, RC 87, etc.
-        id: Number,
+        id: String,
         team: String, // localteam / visitorteam
       },
     ],
@@ -78,9 +78,9 @@ const matchSchema = new mongoose.Schema(
         player_in_number: Number,
         player_in_name: String,
         player_in_booking: String,
-        player_in_id: Number,
+        player_in_id: String,
         player_out_name: String,
-        player_out_id: Number,
+        player_out_id: String,
         minute: String,
         team: String, // localteam / visitorteam
       },
@@ -90,7 +90,7 @@ const matchSchema = new mongoose.Schema(
     coaches: [
       {
         name: String,
-        id: Number,
+        id: String,
         team: String, // localteam / visitorteam
       },
     ],
@@ -99,7 +99,7 @@ const matchSchema = new mongoose.Schema(
     referees: [
       {
         name: String,
-        id: Number,
+        id: String,
       },
     ],
 
@@ -112,7 +112,7 @@ const matchSchema = new mongoose.Schema(
     // Injuries (from player injury feed)
     injuries: [
       {
-        player_id: Number,
+        player_id: String,
         player_name: String,
         type: String, // injury type
         status: String, // e.g. "Out", "Doubtful"
