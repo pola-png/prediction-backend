@@ -79,7 +79,7 @@ async function fetchAndStoreUpcomingMatches() {
     processed++;
 
     try {
-      // --- Upsert Teams (by name only)
+      // --- Upsert Teams (by name only now, no ids)
       let homeTeam = null;
       if (m.home?.name) {
         const homeRes = await Team.findOneAndUpdate(
@@ -118,7 +118,7 @@ async function fetchAndStoreUpcomingMatches() {
         awayTeam = awayRes.value || null;
       }
 
-      // --- Build match object
+      // --- Build match object (no externalId/staticId)
       const setObj = {
         league: m.league || undefined,
         season: m.season || undefined,
@@ -151,7 +151,7 @@ async function fetchAndStoreUpcomingMatches() {
 
       if (homeTeam) {
         setObj.homeTeam = {
-          id: homeTeam._id,
+          id: homeTeam._id, // use Mongo _id
           name: homeTeam.name,
           logoUrl: homeTeam.logoUrl || null,
         };
@@ -169,21 +169,10 @@ async function fetchAndStoreUpcomingMatches() {
         setObj.awayTeam = { name: m.away.name, logoUrl: m.away.logoUrl || null };
       }
 
-      // --- Prevent duplicates: upsert match by natural key (league + date + home + away)
-      const filter = {
-        league: setObj.league || null,
-        date: setObj.date || null,
-        "homeTeam.name": setObj.homeTeam?.name || null,
-        "awayTeam.name": setObj.awayTeam?.name || null,
-      };
-
-      const matchRes = await Match.findOneAndUpdate(
-        filter,
-        { $set: setObj, $setOnInsert: { createdAt: new Date() } },
-        { upsert: true, new: true, setDefaultsOnInsert: true, rawResult: true }
-      );
-
-      if (matchRes.lastErrorObject?.upserted) newMatchesCount++;
+      // Save as a new match (no upsert by ID anymore — always insert)
+      const newMatch = new Match({ ...setObj, createdAt: new Date() });
+      await newMatch.save();
+      newMatchesCount++;
     } catch (err) {
       console.warn("CRON: skipping match due to error:", err.message || err);
       continue;
@@ -191,7 +180,7 @@ async function fetchAndStoreUpcomingMatches() {
   }
 
   console.log(`✅ Total matches processed: ${processed}`);
-  console.log(`✅ Total new matches saved: ${newMatchesCount}`);
+  console.log(`✅ Total new matches inserted: ${newMatchesCount}`);
   return { newMatchesCount, processed };
 }
 
