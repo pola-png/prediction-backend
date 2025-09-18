@@ -24,7 +24,7 @@ export const fetchMatches = async () => {
     for (const m of matches) {
       try {
         // Always generate our own unique key (ignore Goalserve IDs)
-        const unique_key = uuidv4();
+        const unique_key = new mongoose.Types.ObjectId().toString();
 
         const doc = {
           unique_key,
