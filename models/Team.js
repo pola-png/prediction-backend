@@ -4,29 +4,17 @@ const { Schema } = mongoose;
 
 const TeamSchema = new Schema(
   {
-    team_id: { type: Number }, // external provider id (Goalserve static team ID)
-    name: { type: String }, // team display name
+    team_id: { type: Number, index: true, unique: true, sparse: true }, // Goalserve numeric team id
+    name: { type: String, index: true }, // indexed for fast lookup; NOT unique to avoid null collisions
     shortName: { type: String },
     code: { type: String },
     country: { type: String },
     logoUrl: { type: String },
     venue: { type: Schema.Types.Mixed },
     coach: { type: Schema.Types.Mixed },
-    sourceIds: { type: Map, of: String }, // optional external id map
+    sourceIds: { type: Map, of: String } // optional mapping of external ids
   },
   { timestamps: true }
-);
-
-// Ensure name unique only when name exists (prevents duplicate-null error).
-TeamSchema.index(
-  { name: 1 },
-  { unique: true, partialFilterExpression: { name: { $type: 'string' } } }
-);
-
-// Ensure team_id unique only when present
-TeamSchema.index(
-  { team_id: 1 },
-  { unique: true, partialFilterExpression: { team_id: { $type: 'number' } } }
 );
 
 module.exports = mongoose.model('Team', TeamSchema);
