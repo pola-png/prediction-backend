@@ -1,7 +1,7 @@
 const Match = require('../models/Match');
 const Prediction = require('../models/Prediction');
 const Team = require('../models/Team');
-const Player = require('../models/Player'); 
+const Player = require('../models/Player');
 const {
   fetchAndStoreUpcomingMatches,
   importHistoryFromUrl,
@@ -9,7 +9,6 @@ const {
 } = require('../services/cronService');
 
 /* ---------------- Helpers ---------------- */
-
 function getOneXTwo(pred) {
   if (!pred) return null;
   if (pred.outcomes?.oneXTwo) return pred.outcomes.oneXTwo;
@@ -132,7 +131,7 @@ exports.getDashboardData = async (req, res) => {
     res.json({ success: true, data });
   } catch (err) {
     console.error("API: Failed to fetch dashboard data:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch dashboard data" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch dashboard data" });
   }
 };
 
@@ -147,10 +146,10 @@ exports.getPredictionsByBucket = async (req, res) => {
 
     const grouped = groupPredictionsByMatch(predictions);
     const formatted = Object.values(grouped).map(g => formatMatch(g[0].matchId || {}, g));
-    res.json(formatted);
+    res.json({ success: true, data: formatted });
   } catch (err) {
     console.error("API: Failed to fetch predictions:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch predictions" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch predictions" });
   }
 };
 
@@ -173,20 +172,20 @@ async function fetchResultsWithPredictions(limit = 30) {
 exports.getResults = async (req, res) => {
   try {
     const resultsWithOutcome = await fetchResultsWithPredictions(30);
-    res.json(resultsWithOutcome);
+    res.json({ success: true, data: resultsWithOutcome });
   } catch (err) {
     console.error("API: Failed to fetch results:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch results" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch results" });
   }
 };
 
 exports.getRecentResults = async (req, res) => {
   try {
     const resultsWithOutcome = await fetchResultsWithPredictions(10);
-    res.json(resultsWithOutcome);
+    res.json({ success: true, data: resultsWithOutcome });
   } catch (err) {
     console.error("API: Failed to fetch recent results:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch recent results" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch recent results" });
   }
 };
 
@@ -195,14 +194,14 @@ exports.getMatchSummary = async (req, res) => {
     const match = await Match.findById(req.params.matchId)
       .populate("homeTeam awayTeam")
       .lean();
-    if (!match) return res.status(404).json({ error: "Match not found" });
+    if (!match) return res.status(404).json({ success: false, error: "Match not found" });
 
     const predictions = await Prediction.find({ matchId: match._id }).lean();
     const withStatus = applyPredictionStatus(match, predictions);
-    res.json(formatMatch(match, withStatus));
+    res.json({ success: true, data: formatMatch(match, withStatus) });
   } catch (err) {
     console.error("API: Failed to fetch match summary:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch match summary" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch match summary" });
   }
 };
 
@@ -228,10 +227,10 @@ exports.getUpcomingMatches = async (req, res) => {
       return formatMatch(match, preds);
     });
 
-    res.json(out);
+    res.json({ success: true, data: out });
   } catch (err) {
     console.error("API: Failed to fetch upcoming matches:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch upcoming matches" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch upcoming matches" });
   }
 };
 
@@ -243,10 +242,10 @@ exports.getRecentMatches = async (req, res) => {
       .limit(10)
       .lean();
 
-    res.json(recent.map(m => formatMatch(m)));
+    res.json({ success: true, data: recent.map(m => formatMatch(m)) });
   } catch (err) {
     console.error("API: Failed to fetch recent matches:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch recent matches" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch recent matches" });
   }
 };
 
@@ -266,10 +265,10 @@ exports.getMatchHistory = async (req, res) => {
 
     const predictions = await Prediction.find({ matchId: { $in: matches.map(m => m._id) } }).lean();
     const withPreds = matches.map(match => formatMatch(match, applyPredictionStatus(match, predictions.filter(p => String(p.matchId) === String(match._id)))));
-    res.json(withPreds);
+    res.json({ success: true, data: withPreds });
   } catch (err) {
     console.error("API: Failed to fetch match history:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch match history" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch match history" });
   }
 };
 
@@ -281,15 +280,16 @@ exports.getMatchLineups = async (req, res) => {
         path: "homeTeam awayTeam",
         populate: { path: "players" }
       }).lean();
-    if (!match) return res.status(404).json({ error: "Match not found" });
+    if (!match) return res.status(404).json({ success: false, error: "Match not found" });
 
     res.json({
+      success: true,
       home: match.homeTeam.players || [],
       away: match.awayTeam.players || []
     });
   } catch (err) {
     console.error("API: Failed to fetch match lineups:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch match lineups" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch match lineups" });
   }
 };
 
@@ -298,12 +298,12 @@ exports.getTeamPlayers = async (req, res) => {
     const team = await Team.findById(req.params.teamId)
       .populate("players")
       .lean();
-    if (!team) return res.status(404).json({ error: "Team not found" });
+    if (!team) return res.status(404).json({ success: false, error: "Team not found" });
 
-    res.json(team.players || []);
+    res.json({ success: true, data: team.players || [] });
   } catch (err) {
     console.error("API: Failed to fetch team players:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch team players" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch team players" });
   }
 };
 
@@ -311,13 +311,13 @@ exports.getTeamPlayers = async (req, res) => {
 exports.importHistory = async (req, res) => {
   try {
     const { url } = req.body;
-    if (!url) return res.status(400).json({ error: "Missing URL in request body" });
+    if (!url) return res.status(400).json({ success: false, error: "Missing URL in request body" });
 
     const result = await importHistoryFromUrl(url);
     res.json({ success: true, result });
   } catch (err) {
     console.error("API: Failed to import history:", err.message || err);
-    res.status(500).json({ error: "Failed to import match history" });
+    res.status(500).json({ success: false, error: err.message || "Failed to import match history" });
   }
 };
 
@@ -328,7 +328,7 @@ exports.runFetchMatches = async (req, res) => {
     res.json({ success: true, result });
   } catch (err) {
     console.error("API: Failed to run fetch matches cron:", err.message || err);
-    res.status(500).json({ error: "Failed to fetch matches" });
+    res.status(500).json({ success: false, error: err.message || "Failed to fetch matches" });
   }
 };
 
@@ -338,6 +338,6 @@ exports.runGeneratePredictions = async (req, res) => {
     res.json({ success: true, result });
   } catch (err) {
     console.error("API: Failed to run generate predictions cron:", err.message || err);
-    res.status(500).json({ error: "Failed to generate predictions" });
+    res.status(500).json({ success: false, error: err.message || "Failed to generate predictions" });
   }
 };
