@@ -19,7 +19,10 @@ async function fetchJSON(url) {
 function parseGoalserveMatches(json) {
   if (!json?.scores?.category) return [];
 
-  const categories = Array.isArray(json.scores.category) ? json.scores.category : [json.scores.category];
+  const categories = Array.isArray(json.scores.category)
+    ? json.scores.category
+    : [json.scores.category];
+
   const matches = [];
 
   for (const cat of categories) {
@@ -27,10 +30,12 @@ function parseGoalserveMatches(json) {
     const catMatches = Array.isArray(cat.matches) ? cat.matches : [cat.matches];
 
     for (const m of catMatches) {
-      // ensure numeric static_id
-      const staticId = m.id ? Number(m.id) : null;
+      const staticId = m.id && !isNaN(Number(m.id)) ? Number(m.id) : null;
+      const externalId = m.id ? String(m.id) : null;
+
       matches.push({
-        static_id: Number.isFinite(staticId) ? staticId : null,
+        static_id: staticId,
+        externalId,
         league: cat.name || null,
         league_id: cat.id ? Number(cat.id) : null,
         country: cat.country || null,
@@ -55,7 +60,7 @@ function parseGoalserveMatches(json) {
           code: m.awayteam?.code || null,
           country: m.awayteam?.country || null,
           logoUrl: m.awayteam?.logo || null,
-        }
+        },
       });
     }
   }
@@ -80,13 +85,13 @@ async function fetchAndStoreUpcomingMatches() {
   for (const m of parsed) {
     processed++;
 
-    if (!m.static_id) {
-      console.warn("CRON: skipping match without numeric static_id");
+    if (!m.externalId) {
+      console.warn("CRON: skipping match without externalId");
       continue;
     }
 
     try {
-      // --- Teams: prefer team_id; fallback to name if available
+      // --- Upsert Teams
       let homeTeam = null;
       if (m.home?.id || m.home?.name) {
         const homeFilter = m.home.id ? { team_id: m.home.id } : { name: m.home.name };
@@ -125,9 +130,10 @@ async function fetchAndStoreUpcomingMatches() {
         awayTeam = awayRes.value || null;
       }
 
-      // --- Build $set only with existing values (avoid writing nulls)
+      // --- Build $set for match
       const setObj = {
-        static_id: m.static_id,
+        static_id: m.static_id || undefined,
+        externalId: m.externalId,
         league: m.league || undefined,
         league_id: m.league_id || undefined,
         season: m.season || undefined,
@@ -137,22 +143,19 @@ async function fetchAndStoreUpcomingMatches() {
         time: m.time || undefined,
         status: m.status || undefined,
         source: "goalserve",
-        externalId: `goalserve-${m.static_id}`,
       };
 
-      // matchDateUtc / date if date exists
+      // date/time handling
       if (m.date) {
-        // feed date format from doc is dd.MM.yyyy and time HH:mm — convert safely
-        // Try to parse as ISO first; if not, attempt dd.MM.yyyy parsing.
         let dt = null;
-        const isoTry = new Date(`${m.date} ${m.time} UTC`);
-        if (!isNaN(isoTry.getTime())) dt = isoTry;
-        // If dd.MM.yyyy, create from parts
-        if (!dt) {
+        const isoTry = new Date(`${m.date} ${m.time || "00:00"} UTC`);
+        if (!isNaN(isoTry.getTime())) {
+          dt = isoTry;
+        } else {
           const parts = (m.date || "").split(/[.\-\/]/);
           if (parts.length >= 3) {
             const [day, month, year] = parts;
-            const iso = `${year}-${month.padStart(2,"0")}-${day.padStart(2,"0")} ${m.time || "00:00"} UTC`;
+            const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")} ${m.time || "00:00"} UTC`;
             const isoD = new Date(iso);
             if (!isNaN(isoD.getTime())) dt = isoD;
           }
@@ -167,36 +170,35 @@ async function fetchAndStoreUpcomingMatches() {
         setObj.homeTeam = {
           id: homeTeam.team_id || null,
           name: homeTeam.name || null,
-          logoUrl: homeTeam.logoUrl || null
+          logoUrl: homeTeam.logoUrl || null,
         };
       }
       if (awayTeam) {
         setObj.awayTeam = {
           id: awayTeam.team_id || null,
           name: awayTeam.name || null,
-          logoUrl: awayTeam.logoUrl || null
+          logoUrl: awayTeam.logoUrl || null,
         };
       }
 
-      // Clean undefined keys from setObj (so we don't overwrite existing values with undefined)
+      // clean out undefined
       for (const k of Object.keys(setObj)) {
         if (setObj[k] === undefined) delete setObj[k];
       }
 
       const matchRes = await Match.findOneAndUpdate(
-        { static_id: m.static_id },
+        { source: "goalserve", externalId: m.externalId },
         { $set: setObj, $setOnInsert: { createdAt: new Date() } },
         { upsert: true, new: true, setDefaultsOnInsert: true, rawResult: true }
       );
 
-      if (matchRes.lastErrorObject && matchRes.lastErrorObject.upserted) {
+      if (matchRes.lastErrorObject?.upserted) {
         newMatchesCount++;
       }
     } catch (err) {
       console.warn("CRON: skipping match due to error:", err.message || err);
-      // continue with next match
     }
-  } // end loop
+  }
 
   console.log(`✅ Total matches processed: ${processed}`);
   console.log(`✅ Total new matches fetched: ${newMatchesCount}`);
