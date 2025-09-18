@@ -7,6 +7,8 @@ const matchSchema = new Schema(
     // IDs
     static_id: { type: Number, required: true, unique: true, index: true }, // permanent match id across feeds
     id: { type: Number }, // legacy id (may change when rescheduled)
+    externalId: { type: String, index: true }, // feed-specific id like "goalserve-12345"
+    source: { type: String, default: "goalserve", index: true }, // source system
 
     // Tournament info
     league_id: { type: Number },
