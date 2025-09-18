@@ -53,6 +53,17 @@ function parseGoalserveMatches(json) {
           country: m.awayteam?.country || null,
           logoUrl: m.awayteam?.logo || null,
         },
+        scores: m.scores || {},
+        events: m.events || {},
+        odds: m.odds || {},
+        stats: m.stats || {},
+        injuries: m.injuries || [],
+        h2h: m.h2h || {},
+        history: m.history || {},
+        lineups: m.lineups || [],
+        substitutions: m.substitutions || [],
+        coaches: m.coaches || [],
+        referees: m.referees || [],
       });
     }
   }
@@ -117,59 +128,39 @@ async function fetchAndStoreUpcomingMatches() {
         awayTeam = awayRes.value || null;
       }
 
-      // --- Build match object
-      const setObj = {
+      // --- Build full match object
+      const matchObj = {
         league: m.league || undefined,
         season: m.season || undefined,
         country: m.country || undefined,
         stage: m.stage || undefined,
-        time: m.time || undefined,
-        status: m.status || undefined,
+        status: m.status || "scheduled",
         source: "goalserve",
+        matchDateUtc: m.date ? new Date(`${m.date} ${m.time || "00:00"} UTC`) : null,
+        date: m.date ? new Date(`${m.date} ${m.time || "00:00"} UTC`) : null,
+        homeTeam: homeTeam
+          ? { id: homeTeam._id, name: homeTeam.name, logoUrl: homeTeam.logoUrl || null }
+          : { name: m.home?.name || "Home", logoUrl: m.home?.logoUrl || null },
+        awayTeam: awayTeam
+          ? { id: awayTeam._id, name: awayTeam.name, logoUrl: awayTeam.logoUrl || null }
+          : { name: m.away?.name || "Away", logoUrl: m.away?.logoUrl || null },
+        scores: m.scores,
+        events: m.events,
+        odds: m.odds,
+        stats: m.stats,
+        injuries: m.injuries,
+        h2h: m.h2h,
+        history: m.history,
+        lineups: m.lineups,
+        substitutions: m.substitutions,
+        coaches: m.coaches,
+        referees: m.referees,
+        rawMatch: m.rawMatch,
+        createdAt: new Date(),
       };
 
-      // Parse match date/time
-      if (m.date) {
-        let dt = null;
-        const isoTry = new Date(`${m.date} ${m.time || "00:00"} UTC`);
-        if (!isNaN(isoTry.getTime())) dt = isoTry;
-        if (!dt) {
-          const parts = (m.date || "").split(/[.\-\/]/);
-          if (parts.length >= 3) {
-            const [day, month, year] = parts;
-            const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")} ${m.time || "00:00"} UTC`;
-            const isoD = new Date(iso);
-            if (!isNaN(isoD.getTime())) dt = isoD;
-          }
-        }
-        if (dt) {
-          setObj.matchDateUtc = dt;
-          setObj.date = dt;
-        }
-      }
-
-      if (homeTeam) {
-        setObj.homeTeam = {
-          id: homeTeam._id,
-          name: homeTeam.name,
-          logoUrl: homeTeam.logoUrl || null,
-        };
-      } else if (m.home?.name) {
-        setObj.homeTeam = { name: m.home.name, logoUrl: m.home.logoUrl || null };
-      }
-
-      if (awayTeam) {
-        setObj.awayTeam = {
-          id: awayTeam._id,
-          name: awayTeam.name,
-          logoUrl: awayTeam.logoUrl || null,
-        };
-      } else if (m.away?.name) {
-        setObj.awayTeam = { name: m.away.name, logoUrl: m.away.logoUrl || null };
-      }
-
-      // --- Save new match
-      const newMatch = new Match({ ...setObj, createdAt: new Date() });
+      // Save match
+      const newMatch = new Match(matchObj);
       await newMatch.save();
       newMatchesCount++;
     } catch (err) {
