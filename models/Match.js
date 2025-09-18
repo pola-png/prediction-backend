@@ -5,7 +5,7 @@ const { Schema } = mongoose;
 const matchSchema = new Schema(
   {
     // IDs
-    static_id: { type: Number, optional: true, unique: true, index: true }, // permanent match id across feeds
+    static_id: { type: Number, optional: true, index: true }, // permanent match id across feeds
     id: { type: Number }, // legacy id (may change when rescheduled)
     externalId: { type: String, index: true }, // feed-specific id like "goalserve-12345"
     source: { type: String, default: "goalserve", index: true }, // source system
