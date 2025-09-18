@@ -1,15 +1,7 @@
-import mongoose from "mongoose";
+const mongoose = require("mongoose");
 
 const matchSchema = new mongoose.Schema(
   {
-    // Internal unique ID (we control this, not Goalserve)
-    unique_key: { type: String, required: true, unique: true }, 
-
-    // Goalserve IDs (optional now, not unique)
-    static_id: { type: String, default: null },
-    id: { type: String, default: null },
-    fix_id: { type: String, default: null },
-
     // Tournament info
     league: { type: String },
     league_id: { type: String },
@@ -61,4 +53,4 @@ const matchSchema = new mongoose.Schema(
   { minimize: false }
 );
 
-export default mongoose.model("Match", matchSchema);
+module.exports = mongoose.model("Match", matchSchema);
