@@ -4,7 +4,9 @@ const Match = require("../models/Match");
 const Team = require("../models/Team");
 
 const GOALSERVE_TOKEN = process.env.GOALSERVE_TOKEN || "fdc97ba4c57b4de23f4808ddf528229c";
-const GOALSERVE_URL = `https://www.goalserve.com/getfeed/${GOALSERVE_TOKEN}/soccernew/home?json=true`;
+
+const GOALSERVE_FIXTURES = `https://www.goalserve.com/getfeed/${GOALSERVE_TOKEN}/soccerfixtures?json=true`;
+const GOALSERVE_LIVE = `https://www.goalserve.com/getfeed/${GOALSERVE_TOKEN}/soccernew/home?json=true`;
 
 /* ---------------- Parse Goalserve ---------------- */
 function parseGoalserveMatches(json) {
@@ -22,7 +24,7 @@ function parseGoalserveMatches(json) {
 
     for (const m of catMatches) {
       matches.push({
-        static_id: m.id ? Number(m.id) : null, // ✅ make sure it’s numeric
+        static_id: m.id ? Number(m.id) : null,
         league: cat.name,
         league_id: cat.id ? Number(cat.id) : null,
         country: cat.country || null,
@@ -56,78 +58,86 @@ function parseGoalserveMatches(json) {
   return matches;
 }
 
-/* ---------------- Fetch & Store ---------------- */
-async function fetchAndStoreUpcomingMatches() {
-  console.log("Fetching Goalserve:", GOALSERVE_URL);
+/* ---------------- Save Matches ---------------- */
+async function saveMatches(matches) {
+  let newMatchesCount = 0;
+
+  for (const m of matches) {
+    if (!m.static_id) continue;
+
+    const homeTeam = await Team.findOneAndUpdate(
+      { team_id: m.home.id },
+      { ...m.home },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    const awayTeam = await Team.findOneAndUpdate(
+      { team_id: m.away.id },
+      { ...m.away },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    const existing = await Match.findOneAndUpdate(
+      { static_id: m.static_id },
+      {
+        static_id: m.static_id,
+        league: m.league,
+        league_id: m.league_id,
+        season: m.season,
+        country: m.country,
+        stage: m.stage,
+        stage_id: m.stage_id,
+        date: m.date ? new Date(`${m.date} ${m.time} UTC`) : null,
+        time: m.time,
+        status: m.status,
+        homeTeam: {
+          id: homeTeam?.team_id || null,
+          name: homeTeam?.name || null,
+          shortName: homeTeam?.shortName || null,
+          logoUrl: homeTeam?.logoUrl || null,
+        },
+        awayTeam: {
+          id: awayTeam?.team_id || null,
+          name: awayTeam?.name || null,
+          shortName: awayTeam?.shortName || null,
+          logoUrl: awayTeam?.logoUrl || null,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    if (!existing) newMatchesCount++;
+  }
+
+  return newMatchesCount;
+}
+
+/* ---------------- Fetch Both Feeds ---------------- */
+async function fetchAndStoreAllMatches() {
+  let totalNew = 0;
 
   try {
-    const { data } = await axios.get(GOALSERVE_URL, { timeout: 20000 });
-    const matches = parseGoalserveMatches(data);
-
-    if (!matches.length) {
-      console.log("⚠️ Goalserve returned 0 matches");
-      return { newMatchesCount: 0 };
-    }
-
-    let newMatchesCount = 0;
-
-    for (const m of matches) {
-      if (!m.static_id) continue; // skip if invalid
-
-      // ✅ Save/Update Teams
-      const homeTeam = await Team.findOneAndUpdate(
-        { team_id: m.home.id },
-        { ...m.home },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
-
-      const awayTeam = await Team.findOneAndUpdate(
-        { team_id: m.away.id },
-        { ...m.away },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
-
-      // ✅ Save/Update Match
-      const existing = await Match.findOneAndUpdate(
-        { static_id: m.static_id },
-        {
-          static_id: m.static_id,
-          league: m.league,
-          league_id: m.league_id,
-          season: m.season,
-          country: m.country,
-          stage: m.stage,
-          stage_id: m.stage_id,
-          date: m.date ? new Date(`${m.date} ${m.time} UTC`) : null,
-          time: m.time,
-          status: m.status,
-          homeTeam: {
-            id: homeTeam?.team_id || null,
-            name: homeTeam?.name || null,
-            shortName: homeTeam?.shortName || null,
-            logoUrl: homeTeam?.logoUrl || null,
-          },
-          awayTeam: {
-            id: awayTeam?.team_id || null,
-            name: awayTeam?.name || null,
-            shortName: awayTeam?.shortName || null,
-            logoUrl: awayTeam?.logoUrl || null,
-          },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
-
-      if (!existing) newMatchesCount++;
-    }
-
-    console.log("✅ Total new matches fetched:", newMatchesCount);
-    return { newMatchesCount };
+    console.log("⚽ Fetching fixtures:", GOALSERVE_FIXTURES);
+    const { data: fixturesData } = await axios.get(GOALSERVE_FIXTURES, { timeout: 20000 });
+    const fixtures = parseGoalserveMatches(fixturesData);
+    totalNew += await saveMatches(fixtures);
   } catch (err) {
-    console.error("❌ Goalserve fetch failed:", err.message || err);
-    return { newMatchesCount: 0, error: err.message };
+    console.error("❌ Fixtures fetch failed:", err.message || err);
   }
+
+  try {
+    console.log("⚡ Fetching live/new matches:", GOALSERVE_LIVE);
+    const { data: liveData } = await axios.get(GOALSERVE_LIVE, { timeout: 20000 });
+    const liveMatches = parseGoalserveMatches(liveData);
+    totalNew += await saveMatches(liveMatches);
+  } catch (err) {
+    console.error("❌ Live fetch failed:", err.message || err);
+  }
+
+  console.log("✅ Total new matches added:", totalNew);
+  return { newMatchesCount: totalNew };
 }
 
 module.exports = {
-  fetchAndStoreUpcomingMatches,
+  fetchAndStoreAllMatches,
 };
