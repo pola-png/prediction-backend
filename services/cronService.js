@@ -1,3 +1,4 @@
+e // services/cronService.js
 const axios = require("axios");
 const Match = require("../models/Match");
 const Team = require("../models/Team");
@@ -6,6 +7,9 @@ const GOALSERVE_TOKEN =
   process.env.GOALSERVE_TOKEN || "fdc97ba4c57b4de23f4808ddf528229c";
 const GOALSERVE_URL = `https://www.goalserve.com/getfeed/${GOALSERVE_TOKEN}/soccernew/home?json=true`;
 
+/**
+ * Fetch JSON helper
+ */
 async function fetchJSON(url) {
   try {
     const { data } = await axios.get(url, { timeout: 20000 });
@@ -16,6 +20,9 @@ async function fetchJSON(url) {
   }
 }
 
+/**
+ * Parse Goalserve feed into normalized matches
+ */
 function parseGoalserveMatches(json) {
   if (!json?.scores?.category) return [];
 
@@ -27,7 +34,10 @@ function parseGoalserveMatches(json) {
 
   for (const cat of categories) {
     if (!cat.matches) continue;
-    const catMatches = Array.isArray(cat.matches) ? cat.matches : [cat.matches];
+
+    const catMatches = Array.isArray(cat.matches)
+      ? cat.matches
+      : [cat.matches];
 
     for (const m of catMatches) {
       matches.push({
@@ -71,6 +81,9 @@ function parseGoalserveMatches(json) {
   return matches;
 }
 
+/**
+ * Fetch and store matches into MongoDB
+ */
 async function fetchAndStoreUpcomingMatches() {
   console.log("Fetching Goalserve:", GOALSERVE_URL);
   const data = await fetchJSON(GOALSERVE_URL);
@@ -89,7 +102,7 @@ async function fetchAndStoreUpcomingMatches() {
     processed++;
 
     try {
-      // --- Upsert Teams
+      // --- Upsert Teams ---
       let homeTeam = null;
       if (m.home?.name) {
         const homeRes = await Team.findOneAndUpdate(
@@ -104,9 +117,9 @@ async function fetchAndStoreUpcomingMatches() {
             },
             $setOnInsert: { createdAt: new Date() },
           },
-          { upsert: true, new: true, setDefaultsOnInsert: true, rawResult: true }
+          { upsert: true, new: true }
         );
-        homeTeam = homeRes.value || null;
+        homeTeam = homeRes;
       }
 
       let awayTeam = null;
@@ -123,12 +136,12 @@ async function fetchAndStoreUpcomingMatches() {
             },
             $setOnInsert: { createdAt: new Date() },
           },
-          { upsert: true, new: true, setDefaultsOnInsert: true, rawResult: true }
+          { upsert: true, new: true }
         );
-        awayTeam = awayRes.value || null;
+        awayTeam = awayRes;
       }
 
-      // --- Build full match object
+      // --- Build full match object ---
       const matchObj = {
         league: m.league || undefined,
         season: m.season || undefined,
@@ -136,8 +149,9 @@ async function fetchAndStoreUpcomingMatches() {
         stage: m.stage || undefined,
         status: m.status || "scheduled",
         source: "goalserve",
-        matchDateUtc: m.date ? new Date(`${m.date} ${m.time || "00:00"} UTC`) : null,
-        date: m.date ? new Date(`${m.date} ${m.time || "00:00"} UTC`) : null,
+        matchDateUtc: m.date
+          ? new Date(`${m.date} ${m.time || "00:00"} UTC`)
+          : null,
         homeTeam: homeTeam
           ? { id: homeTeam._id, name: homeTeam.name, logoUrl: homeTeam.logoUrl || null }
           : { name: m.home?.name || "Home", logoUrl: m.home?.logoUrl || null },
@@ -156,21 +170,31 @@ async function fetchAndStoreUpcomingMatches() {
         coaches: m.coaches,
         referees: m.referees,
         rawMatch: m.rawMatch,
-        createdAt: new Date(),
+        updatedAt: new Date(),
       };
 
-      // Save match
-      const newMatch = new Match(matchObj);
-      await newMatch.save();
-      newMatchesCount++;
+      // --- Upsert Match ---
+      const existing = await Match.findOneAndUpdate(
+        {
+          "homeTeam.name": matchObj.homeTeam.name,
+          "awayTeam.name": matchObj.awayTeam.name,
+          matchDateUtc: matchObj.matchDateUtc,
+        },
+        { $set: matchObj, $setOnInsert: { createdAt: new Date() } },
+        { upsert: true, new: true }
+      );
+
+      if (!existing.createdAt || existing.createdAt.getTime() === existing.updatedAt.getTime()) {
+        newMatchesCount++;
+      }
     } catch (err) {
-      console.warn("CRON: skipping match due to error:", err.message || err);
+      console.warn("⚠️ Skipping match due to error:", err.message || err);
       continue;
     }
   }
 
   console.log(`✅ Total matches processed: ${processed}`);
-  console.log(`✅ Total new matches inserted: ${newMatchesCount}`);
+  console.log(`✅ Total new/upserted matches: ${newMatchesCount}`);
   return { newMatchesCount, processed };
 }
 
