@@ -1,133 +1,109 @@
 // models/Match.js
 const mongoose = require('mongoose');
+const { Schema } = mongoose;
 
-const matchSchema = new mongoose.Schema(
+const matchSchema = new Schema(
   {
-    // Unique IDs
-    static_id: { type: String, required: true, unique: true, index: true }, // permanent match ID across feeds
-    id: { type: String }, // legacy ID (can change if match is rescheduled)
+    // IDs
+    static_id: { type: Number, required: true, unique: true, index: true }, // permanent match id across feeds
+    id: { type: Number }, // legacy id (may change when rescheduled)
 
     // Tournament info
-    league_id: { type: String },
+    league_id: { type: Number },
     league: { type: String },
     season: { type: String },
     country: { type: String },
     stage: { type: String },
-    stage_id: { type: String },
-    gid: { type: String }, // stage mapping ID
-    groupId: { type: String }, // for tournaments with groups
+    stage_id: { type: Number },
+    gid: { type: Number },
+    groupId: { type: Number },
 
-    // Match info
-    date: { type: Date },
+    // Date/time
+    matchDateUtc: { type: Date },
+    date: { type: Date }, // optional original date field
     time: { type: String },
+
     status: { type: String }, // Scheduled, FT, AET, Postp., etc.
 
     // Venue info
     venue: { type: String },
-    venue_id: { type: String },
+    venue_id: { type: Number },
     venue_city: { type: String },
 
-    // Teams
-    homeTeam: {
-      id: String,
-      name: String,
-      score: Number,
-      ft_score: String,
-      et_score: String,
-      pen_score: String,
-    },
-    awayTeam: {
-      id: String,
-      name: String,
-      score: Number,
-      ft_score: String,
-      et_score: String,
-      pen_score: String,
-    },
+    // Teams: references to Team model (populate in controllers)
+    homeTeam: { type: Schema.Types.ObjectId, ref: 'Team' },
+    awayTeam: { type: Schema.Types.ObjectId, ref: 'Team' },
+
+    // Scores
+    homeGoals: { type: Number },
+    awayGoals: { type: Number },
+    ft_score: { type: Number },
+    ft_score_away: { type: Number },
+    et_score: { type: Number },
+    et_score_away: { type: Number },
+    pen_score: { type: Number },
+    pen_score_away: { type: Number },
 
     // Halftime
     halftime: { type: String },
 
-    // Goals
+    // Goals (feed events)
     goals: [
       {
-        team: String, // localteam / visitorteam
-        minute: String, // e.g. "45+2"
+        team: String,
+        minute: String,
         player: String,
-        playerid: String,
+        playerid: Number,
         assist: String,
-        assistid: String,
-        score: String, // score after goal
+        assistid: Number,
+        score: String,
       },
     ],
 
-    // Lineups
+    // Lineups & substitutions & staff & officials
     lineups: [
       {
         number: Number,
         name: String,
-        booking: String, // YC 45, RC 87, etc.
-        id: String,
-        team: String, // localteam / visitorteam
+        booking: String,
+        id: Number,
+        team: String,
       },
     ],
-
-    // Substitutions
     substitutions: [
       {
         player_in_number: Number,
         player_in_name: String,
         player_in_booking: String,
-        player_in_id: String,
+        player_in_id: Number,
         player_out_name: String,
-        player_out_id: String,
+        player_out_id: Number,
         minute: String,
-        team: String, // localteam / visitorteam
+        team: String,
       },
     ],
-
-    // Coaches
     coaches: [
       {
         name: String,
-        id: String,
-        team: String, // localteam / visitorteam
+        id: Number,
+        team: String,
       },
     ],
-
-    // Referees
     referees: [
       {
         name: String,
-        id: String,
+        id: Number,
       },
     ],
 
-    // Odds (pregame/moneyline/etc.)
-    odds: { type: mongoose.Schema.Types.Mixed },
-
-    // Live stats (commentaries, player stats, etc.)
-    stats: { type: mongoose.Schema.Types.Mixed },
-
-    // Injuries (from player injury feed)
-    injuries: [
-      {
-        player_id: String,
-        player_name: String,
-        type: String, // injury type
-        status: String, // e.g. "Out", "Doubtful"
-        start_date: String,
-        expected_return: String,
-      },
-    ],
-
-    // Head-to-head comparison data
-    h2h: { type: mongoose.Schema.Types.Mixed },
-
-    // Historical match link (optional)
-    history: { type: mongoose.Schema.Types.Mixed },
+    // Odds / stats / injuries / h2h / history
+    odds: { type: Schema.Types.Mixed },
+    stats: { type: Schema.Types.Mixed },
+    injuries: [{ type: Schema.Types.Mixed }],
+    h2h: { type: Schema.Types.Mixed },
+    history: { type: Schema.Types.Mixed },
   },
   { timestamps: true }
 );
 
-module.exports = mongoose.model("Match", matchSchema);
+module.exports = mongoose.model('Match', matchSchema);
