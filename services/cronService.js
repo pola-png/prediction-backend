@@ -1,4 +1,3 @@
-// services/cronService.js
 const axios = require("axios");
 const Match = require("../models/Match");
 const Team = require("../models/Team");
@@ -79,7 +78,7 @@ async function fetchAndStoreUpcomingMatches() {
     processed++;
 
     try {
-      // --- Upsert Teams (by name only now, no ids)
+      // --- Upsert Teams
       let homeTeam = null;
       if (m.home?.name) {
         const homeRes = await Team.findOneAndUpdate(
@@ -118,7 +117,7 @@ async function fetchAndStoreUpcomingMatches() {
         awayTeam = awayRes.value || null;
       }
 
-      // --- Build match object (no externalId/staticId)
+      // --- Build match object
       const setObj = {
         league: m.league || undefined,
         season: m.season || undefined,
@@ -129,7 +128,7 @@ async function fetchAndStoreUpcomingMatches() {
         source: "goalserve",
       };
 
-      // Parse and set match date/time
+      // Parse match date/time
       if (m.date) {
         let dt = null;
         const isoTry = new Date(`${m.date} ${m.time || "00:00"} UTC`);
@@ -151,7 +150,7 @@ async function fetchAndStoreUpcomingMatches() {
 
       if (homeTeam) {
         setObj.homeTeam = {
-          id: homeTeam._id, // use Mongo _id
+          id: homeTeam._id,
           name: homeTeam.name,
           logoUrl: homeTeam.logoUrl || null,
         };
@@ -169,7 +168,7 @@ async function fetchAndStoreUpcomingMatches() {
         setObj.awayTeam = { name: m.away.name, logoUrl: m.away.logoUrl || null };
       }
 
-      // Save as a new match (no upsert by ID anymore — always insert)
+      // --- Save new match
       const newMatch = new Match({ ...setObj, createdAt: new Date() });
       await newMatch.save();
       newMatchesCount++;
