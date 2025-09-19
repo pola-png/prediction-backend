@@ -1,4 +1,3 @@
-e // services/cronService.js
 const axios = require("axios");
 const Match = require("../models/Match");
 const Team = require("../models/Team");
@@ -6,6 +5,8 @@ const Team = require("../models/Team");
 const GOALSERVE_TOKEN =
   process.env.GOALSERVE_TOKEN || "fdc97ba4c57b4de23f4808ddf528229c";
 const GOALSERVE_URL = `https://www.goalserve.com/getfeed/${GOALSERVE_TOKEN}/soccernew/home?json=true`;
+
+// ... rest of your cronService.js code
 
 /**
  * Fetch JSON helper
